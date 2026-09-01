@@ -1,0 +1,24 @@
+# Dependencies and package-manager state
+node_modules/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+!.env.*.example
+!**/.env.example
+!**/.env.*.example
+
+# Build, framework, test, and cache output
+dist/
+.next/
+.turbo/
+coverage/
+playwright-report/
+test-results/
+*.tsbuildinfo
+
+# Local editor and operating-system files
+.DS_Store
+.idea/
+.vscode/

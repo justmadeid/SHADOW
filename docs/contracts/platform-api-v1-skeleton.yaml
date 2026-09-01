@@ -1,0 +1,453 @@
+openapi: 3.1.0
+info:
+  title: Investigation Intelligence Platform API
+  version: 1.0.0-skeleton
+  description: Structural skeleton. Field-complete API will be expanded slice-by-slice.
+servers:
+  - url: /api/v1
+
+tags:
+  - name: Case
+  - name: Investigation
+  - name: Subject
+  - name: Resolution
+  - name: Entity Registry
+  - name: Knowledge
+  - name: Evidence
+  - name: Dataset
+  - name: Analysis
+  - name: Monitoring
+  - name: Workflow
+  - name: Execution
+  - name: Intelligence
+  - name: Search
+  - name: SHADOW Queries
+  - name: ECHO Queries
+  - name: SPECTRA Queries
+
+paths:
+  /cases:
+    get:
+      tags: [Case]
+      summary: List cases
+      responses:
+        '200': { description: OK }
+    post:
+      tags: [Case]
+      summary: Create case
+      responses:
+        '201': { description: Created }
+
+  /cases/{caseId}:
+    get:
+      tags: [Case]
+      summary: Get case
+      parameters: [{$ref: '#/components/parameters/CaseId'}]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Case'}
+    patch:
+      tags: [Case]
+      summary: Update case
+      parameters: [{$ref: '#/components/parameters/CaseId'}]
+      responses:
+        '200': { description: Updated }
+
+  /cases/{caseId}/investigations:
+    get:
+      tags: [Investigation]
+      parameters: [{$ref: '#/components/parameters/CaseId'}]
+      responses:
+        '200': { description: OK }
+    post:
+      tags: [Investigation]
+      parameters: [{$ref: '#/components/parameters/CaseId'}]
+      responses:
+        '201': { description: Created }
+
+  /cases/{caseId}/subjects:
+    get:
+      tags: [Subject]
+      parameters: [{$ref: '#/components/parameters/CaseId'}]
+      responses:
+        '200': { description: OK }
+    post:
+      tags: [Subject]
+      parameters: [{$ref: '#/components/parameters/CaseId'}]
+      responses:
+        '201': { description: Created }
+
+  /subjects/{subjectId}:
+    get:
+      tags: [Subject]
+      parameters: [{$ref: '#/components/parameters/SubjectId'}]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/InvestigationSubject'}
+
+  /subjects/{subjectId}/actions/start-resolution:
+    post:
+      tags: [Resolution]
+      summary: Start subject resolution
+      parameters: [{$ref: '#/components/parameters/SubjectId'}]
+      responses:
+        '202': { description: Resolution started }
+
+  /resolutions/{resolutionId}/candidates:
+    get:
+      tags: [Resolution]
+      parameters:
+        - name: resolutionId
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '200': { description: OK }
+
+  /resolutions/{resolutionId}/matches:
+    get:
+      tags: [Resolution]
+      parameters:
+        - name: resolutionId
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '200': { description: Governance-aware workspace entity matches }
+
+  /candidates/{candidateId}/actions/resolve:
+    post:
+      tags: [Resolution]
+      parameters:
+        - name: candidateId
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '200': { description: Resolution decision recorded }
+
+  /entities/{entityId}:
+    get:
+      tags: [Entity Registry]
+      parameters: [{$ref: '#/components/parameters/EntityId'}]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Entity'}
+
+  /cases/{caseId}/relationships:
+    get:
+      tags: [Knowledge]
+      parameters: [{$ref: '#/components/parameters/CaseId'}]
+      responses:
+        '200': { description: OK }
+    post:
+      tags: [Knowledge]
+      parameters: [{$ref: '#/components/parameters/CaseId'}]
+      responses:
+        '201': { description: Created }
+
+  /relationships/{relationshipId}/actions/promote:
+    post:
+      tags: [Knowledge]
+      parameters:
+        - name: relationshipId
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '201': { description: Workspace knowledge artifact created }
+
+  /cases/{caseId}/evidence:
+    get:
+      tags: [Evidence]
+      parameters: [{$ref: '#/components/parameters/CaseId'}]
+      responses:
+        '200': { description: OK }
+
+  /datasets/{datasetId}:
+    get:
+      tags: [Dataset]
+      parameters:
+        - name: datasetId
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '200': { description: OK }
+
+  /datasets/{datasetId}/analyses:
+    post:
+      tags: [Analysis]
+      parameters:
+        - name: datasetId
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '202': { description: Analysis queued }
+
+  /cases/{caseId}/monitoring-targets:
+    get:
+      tags: [Monitoring]
+      parameters: [{$ref: '#/components/parameters/CaseId'}]
+      responses:
+        '200': { description: OK }
+    post:
+      tags: [Monitoring]
+      parameters: [{$ref: '#/components/parameters/CaseId'}]
+      responses:
+        '201': { description: Created }
+
+  /nodes/{nodeInstanceId}/actions/run:
+    post:
+      tags: [Execution]
+      parameters:
+        - name: nodeInstanceId
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '202': { description: Run queued }
+
+  /runs/{runId}:
+    get:
+      tags: [Execution]
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Run'}
+
+  /cases/{caseId}/hypotheses:
+    get:
+      tags: [Intelligence]
+      parameters: [{$ref: '#/components/parameters/CaseId'}]
+      responses:
+        '200': { description: OK }
+    post:
+      tags: [Intelligence]
+      parameters: [{$ref: '#/components/parameters/CaseId'}]
+      responses:
+        '201': { description: Draft hypothesis created }
+
+  /hypotheses/{hypothesisId}/actions/assess:
+    post:
+      tags: [Intelligence]
+      parameters:
+        - name: hypothesisId
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '200': { description: Assessment recorded }
+
+  /cases/{caseId}/findings:
+    get:
+      tags: [Intelligence]
+      parameters: [{$ref: '#/components/parameters/CaseId'}]
+      responses:
+        '200': { description: OK }
+    post:
+      tags: [Intelligence]
+      parameters: [{$ref: '#/components/parameters/CaseId'}]
+      responses:
+        '201': { description: Draft finding created }
+
+  /findings/{findingId}/actions/submit-review:
+    post:
+      tags: [Intelligence]
+      parameters: [{$ref: '#/components/parameters/FindingId'}]
+      responses:
+        '200': { description: Submitted }
+
+  /findings/{findingId}/reviews:
+    post:
+      tags: [Intelligence]
+      parameters: [{$ref: '#/components/parameters/FindingId'}]
+      responses:
+        '201': { description: Review created }
+
+  /search:
+    post:
+      tags: [Search]
+      summary: Governance-aware platform search
+      responses:
+        '200': { description: OK }
+
+  /shadow/cases/{caseId}/overview:
+    get:
+      tags: [SHADOW Queries]
+      parameters: [{$ref: '#/components/parameters/CaseId'}]
+      responses:
+        '200': { description: SHADOW case overview read model }
+
+  /shadow/cases/{caseId}/profile-inbox:
+    get:
+      tags: [SHADOW Queries]
+      parameters: [{$ref: '#/components/parameters/CaseId'}]
+      responses:
+        '200': { description: Unified unresolved discovery inbox }
+
+  /echo/cases/{caseId}/graph:
+    get:
+      tags: [ECHO Queries]
+      parameters: [{$ref: '#/components/parameters/CaseId'}]
+      responses:
+        '200': { description: Layered graph read model }
+
+  /spectra/cases/{caseId}/overview:
+    get:
+      tags: [SPECTRA Queries]
+      parameters: [{$ref: '#/components/parameters/CaseId'}]
+      responses:
+        '200': { description: Monitoring/media intelligence summary }
+
+components:
+  parameters:
+    CaseId:
+      name: caseId
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+    SubjectId:
+      name: subjectId
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+    EntityId:
+      name: entityId
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+    FindingId:
+      name: findingId
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+
+  schemas:
+    DataClassification:
+      type: string
+      enum: [PUBLIC, INTERNAL, SENSITIVE, RESTRICTED]
+
+    ResourceRef:
+      type: object
+      required: [type, id, workspaceId]
+      properties:
+        type: {type: string}
+        id: {type: string, format: uuid}
+        workspaceId: {type: string, format: uuid}
+        caseId: {type: [string, 'null'], format: uuid}
+
+    Case:
+      type: object
+      required: [id, code, workspaceId, title, status, revision]
+      properties:
+        id: {type: string, format: uuid}
+        code: {type: string}
+        workspaceId: {type: string, format: uuid}
+        title: {type: string}
+        status:
+          type: string
+          enum: [DRAFT, ACTIVE, CLOSED, ARCHIVED]
+        classification: {$ref: '#/components/schemas/DataClassification'}
+        revision: {type: integer}
+
+    SubjectSeedField:
+      type: object
+      required: [name, value, origin]
+      properties:
+        name: {type: string}
+        value: {}
+        origin:
+          type: string
+          enum: [INVESTIGATOR_INPUT, SOURCE_RECORD, EVIDENCE, ANALYSIS_EXTRACTION, IMPORT]
+        evidenceRef: {$ref: '#/components/schemas/ResourceRef'}
+        classification: {$ref: '#/components/schemas/DataClassification'}
+
+    SubjectSeed:
+      type: object
+      required: [fields]
+      properties:
+        fields:
+          type: array
+          items: {$ref: '#/components/schemas/SubjectSeedField'}
+
+    InvestigationSubject:
+      type: object
+      required: [id, caseId, subjectType, role, status, revision]
+      properties:
+        id: {type: string, format: uuid}
+        caseId: {type: string, format: uuid}
+        subjectType:
+          type: string
+          enum: [PERSON, ORGANIZATION, SOCIAL_ACCOUNT, DOMAIN, UNKNOWN]
+        role:
+          type: string
+          enum: [PRIMARY_TARGET, SECONDARY_TARGET, PERSON_OF_INTEREST, RELATED_PERSON, WITNESS, UNKNOWN]
+        status:
+          type: string
+          enum: [UNRESOLVED, RESOLVING, RESOLVED, RESOLUTION_FAILED, ARCHIVED]
+        entityRef: {$ref: '#/components/schemas/ResourceRef'}
+        seed: {$ref: '#/components/schemas/SubjectSeed'}
+        revision: {type: integer}
+
+    Entity:
+      type: object
+      required: [id, workspaceId, type, status, canonicalLabel, revision]
+      properties:
+        id: {type: string, format: uuid}
+        workspaceId: {type: string, format: uuid}
+        type: {type: string}
+        status:
+          type: string
+          enum: [ACTIVE, MERGED, ARCHIVED]
+        canonicalLabel: {type: string}
+        revision: {type: integer}
+
+    RunProgress:
+      type: object
+      properties:
+        stage: {type: string}
+        processed: {type: integer}
+        produced: {type: integer}
+        total: {type: [integer, 'null']}
+
+    Run:
+      type: object
+      required: [id, status]
+      properties:
+        id: {type: string, format: uuid}
+        status:
+          type: string
+          enum: [QUEUED, RUNNING, COMPLETED, PARTIAL, FAILED, CANCELLED]
+        progress: {$ref: '#/components/schemas/RunProgress'}
+        retryOfRunId: {type: [string, 'null'], format: uuid}
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, requestId]
+          properties:
+            code: {type: string}
+            message: {type: string}
+            requestId: {type: string}
+            resource: {$ref: '#/components/schemas/ResourceRef'}

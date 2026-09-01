@@ -1,0 +1,85 @@
+version: 2
+status: discussion-baseline
+notes:
+  - leaked-service and the previously named Resident Hono API are the same technical service.
+  - Do not model them as separate connectors.
+
+sources:
+  - id: person-data-hono
+    name: leaked-service / Hono Person Lookup API
+    repository_alias: leaked-service
+    type: local_internal_service
+    status: planned_primary
+    classification: RESTRICTED
+    capabilities:
+      - PERSON_LOOKUP
+    capabilities_to_confirm:
+      - IDENTIFIER_LOOKUP
+    architecture:
+      path:
+        - Investigation Platform
+        - Person Lookup Connector
+        - leaked-service / Hono API
+        - Elasticsearch
+      direct_elasticsearch_access_allowed: false
+    raw_persistence: source_policy_minimized
+    governance_to_confirm:
+      - dataset_provenance
+      - permitted_use
+      - retention
+      - masking
+      - export_policy
+      - reason_for_access
+    notes:
+      - The repository name alone does not determine governance status.
+      - Inspect the actual service contract after M0; do not create a duplicate ResidentHonoConnector.
+
+  - id: user-scanner
+    name: user-scanner
+    type: local_internal_service
+    status: candidate
+    classification: SENSITIVE
+    capabilities_proposed:
+      - ACCOUNT_PRESENCE_LOOKUP_BY_EMAIL
+    raw_persistence: minimized
+    notes:
+      - Positive presence signal is not proof of account ownership.
+
+  - id: twitter-scrapper-api
+    name: twitter-scrapper-api
+    type: local_internal_service
+    status: deferred
+    classification: SENSITIVE
+    capabilities_proposed:
+      - SOCIAL_ACCOUNT_DISCOVERY
+      - SOCIAL_ACTIVITY_COLLECTION
+
+  - id: osint-industries
+    name: OSINT Industries
+    type: external_paid_api
+    status: candidate_contract_review_required
+    classification: SENSITIVE
+    base_url: https://api.osint.industries
+    endpoint: /v2/request
+    method: POST
+    auth:
+      type: header
+      header: api-key
+      env_ref: OSINT_INDUSTRIES_API_KEY
+    documented_query_types:
+      - email
+      - phone
+      - username
+      - name
+      - wallet
+    intended_query_types:
+      - email
+      - phone
+      - username
+      - name
+    capabilities_proposed:
+      - IDENTIFIER_ENRICHMENT
+      - PERSON_DISCOVERY_BY_NAME
+    raw_persistence: disabled_by_default
+    normalized_persistence: pending_contract_review
+    terms_review_required: true

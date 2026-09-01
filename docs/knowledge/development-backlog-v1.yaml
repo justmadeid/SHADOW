@@ -1,0 +1,1167 @@
+name: Investigation Intelligence Platform Development Backlog v1
+status: architecture-derived
+principles:
+- security_and_confidentiality_before_convenience
+- provenance_before_automation
+- canonical_writes_follow_domain_ownership
+- vertical_slices_with_foundation_first_dependencies
+phases:
+- id: P0
+  name: Repository & Engineering Baseline
+  milestone: M0 Engineering Ready
+  goal: Semua deployable dapat boot, dites, diobservasi, dan mengikuti boundary sebelum business complexity masuk.
+  tasks:
+  - id: P0-001
+    title: Scaffold monorepo and deployables
+    area: platform
+    description: Create apps/platform-web, platform-api, connector-worker, intelligence-worker, indexing-worker and shared
+      packages.
+    dependencies: []
+    acceptance: All apps boot locally; workspace scripts build/test/lint all packages.
+  - id: P0-002
+    title: Enforce frontend product boundaries
+    area: frontend
+    description: Add lint/dependency rules preventing SHADOW/ECHO/SPECTRA internal cross-imports.
+    dependencies:
+    - P0-001
+    acceptance: CI fails on forbidden product import.
+  - id: P0-003
+    title: Enforce backend module boundaries
+    area: backend
+    description: Prevent modules from importing another module's infrastructure/repository internals.
+    dependencies:
+    - P0-001
+    acceptance: Only public module entrypoints/facades can be imported cross-module.
+  - id: P0-004
+    title: Environment and configuration contract
+    area: platform
+    description: Typed config validation, environment separation, safe defaults, startup failure on invalid required config.
+    dependencies:
+    - P0-001
+    acceptance: No silent fallback for security-critical config; secrets absent from repository.
+  - id: P0-005
+    title: Local infrastructure stack
+    area: platform
+    description: Provide reproducible local PostgreSQL, Redis, S3-compatible object store, Investigation Elasticsearch and
+      telemetry dependencies.
+    dependencies:
+    - P0-001
+    acceptance: One documented command boots local dependencies and health checks pass.
+  - id: P0-006
+    title: Database transaction foundation
+    area: backend
+    description: Create DB connection, transaction context, migration conventions and module-owned persistence pattern.
+    dependencies:
+    - P0-004
+    - P0-005
+    acceptance: Transactions can span public module operations without exposing raw DB client cross-module.
+  - id: P0-007
+    title: Transactional outbox foundation
+    area: backend
+    description: Implement outbox persistence primitive and dispatcher contract.
+    dependencies:
+    - P0-006
+    acceptance: Business row + outbox row commit atomically; dispatcher is retry-safe.
+  - id: P0-008
+    title: Request context foundation
+    area: backend
+    description: Propagate requestId, traceId, user/workspace/case context and optional reasonForAccess.
+    dependencies:
+    - P0-004
+    acceptance: Context available to application layer without global mutable state.
+  - id: P0-009
+    title: Structured PII-safe logging
+    area: platform
+    description: Central logger, redaction rules, correlation IDs and prohibited-field tests.
+    dependencies:
+    - P0-008
+    acceptance: NIK/phone/email/raw payload are redacted by default; tests prove it.
+  - id: P0-010
+    title: OpenTelemetry baseline
+    area: platform
+    description: Trace API, queue dispatch and worker skeleton; add core metrics.
+    dependencies:
+    - P0-008
+    acceptance: Trace correlation works API → outbox/queue → worker.
+  - id: P0-011
+    title: API primitives
+    area: backend
+    description: Implement shared ErrorResponse, ResourceRef, pagination, revision/ETag and Idempotency-Key helpers.
+    dependencies:
+    - P0-001
+    acceptance: Contract tests cover error, cursor, conflict and idempotency semantics.
+  - id: P0-012
+    title: Testing foundation
+    area: quality
+    description: Unit, module integration, contract and E2E test harnesses with isolated test data.
+    dependencies:
+    - P0-001
+    - P0-005
+    acceptance: CI runs deterministic tests without depending on developer machine state.
+  - id: P0-013
+    title: CI quality pipeline
+    area: devops
+    description: Lint, typecheck, unit/integration tests, dependency-boundary checks, migration validation and build.
+    dependencies:
+    - P0-002
+    - P0-003
+    - P0-012
+    acceptance: No merge when required quality gate fails.
+  - id: P0-014
+    title: Health/readiness endpoints
+    area: platform
+    description: Define liveness/readiness for API and worker processes.
+    dependencies:
+    - P0-005
+    acceptance: Readiness reflects critical internal dependencies but not optional external-source health.
+  - id: P0-015
+    title: Developer and AI-agent operating rules
+    area: docs
+    description: Add AGENTS.md, engineering standards, Definition of Done and task template.
+    dependencies:
+    - P0-001
+    acceptance: New engineer/agent has an explicit reading order and forbidden-shortcut list.
+- id: P1
+  name: Auth, Workspace, Case & Governance Foundation
+  milestone: M1 Protected Case Shell
+  goal: Membangun protected Case context dan authorization foundation yang akan dipakai semua capability.
+  tasks:
+  - id: P1-001
+    title: OIDC authentication integration
+    area: backend
+    description: Validate access tokens and service identities; do not embed domain authorization in auth middleware.
+    dependencies:
+    - P0-008
+    acceptance: 401/identity behavior covered by integration tests.
+  - id: P1-002
+    title: Workspace domain
+    area: backend
+    description: Workspace, membership and basic settings with UUIDv7 IDs and revision.
+    dependencies:
+    - P1-001
+    - P0-006
+    acceptance: Workspace access isolated; membership changes auditable.
+  - id: P1-003
+    title: Case domain
+    area: backend
+    description: Case aggregate, code, classification, status lifecycle and optimistic concurrency.
+    dependencies:
+    - P1-002
+    acceptance: Create/read/update/close/reopen Case contracts pass.
+  - id: P1-004
+    title: Investigation domain
+    area: backend
+    description: Investigation branches/objectives/status under Case.
+    dependencies:
+    - P1-003
+    acceptance: Investigation cannot cross workspace/case boundary.
+  - id: P1-005
+    title: Governance permission model
+    area: security
+    description: Role/permission/action/resource/context policy model and PolicyEnforcer facade.
+    dependencies:
+    - P1-001
+    - P1-002
+    acceptance: Authorization decisions are centralized and unit tested.
+  - id: P1-006
+    title: Case membership policy
+    area: security
+    description: Case-scoped membership and access checks, including confidentiality-safe 404 behavior.
+    dependencies:
+    - P1-003
+    - P1-005
+    acceptance: IDOR/cross-case tests prove isolation.
+  - id: P1-007
+    title: Data classification primitive
+    area: security
+    description: PUBLIC/INTERNAL/SENSITIVE/RESTRICTED handling metadata and policy hooks.
+    dependencies:
+    - P1-005
+    acceptance: Classification can influence display/export/source access without app-name branching.
+  - id: P1-008
+    title: Critical audit baseline
+    area: backend
+    description: Append-only audit events/intents for case access changes and sensitive operations.
+    dependencies:
+    - P0-007
+    - P1-005
+    acceptance: Business action cannot commit while required durable audit intent is lost.
+  - id: P1-009
+    title: Platform shell auth/workspace/case context
+    area: frontend
+    description: Global shell contexts, navigation, guarded routes and permission-aware UI.
+    dependencies:
+    - P1-002
+    - P1-003
+    - P1-006
+    acceptance: SHADOW/ECHO/SPECTRA share one Case context without sharing product-local state.
+  - id: P1-010
+    title: Case CRUD UI in SHADOW
+    area: frontend
+    description: Create/list/open/update/close Case and create investigations.
+    dependencies:
+    - P1-009
+    - P1-004
+    acceptance: User can complete basic protected Case lifecycle.
+- id: P2
+  name: Subject → Resolution → Entity Registry
+  milestone: M2 Reusable Identity Core
+  goal: 'Membuat identity pipeline aman: unknown subject → candidate → human resolution → reusable Entity.'
+  tasks:
+  - id: P2-001
+    title: InvestigationSubject aggregate
+    area: backend
+    description: Subject type, role, lifecycle, entity linkage and revision.
+    dependencies:
+    - P1-004
+    acceptance: RESOLVED requires valid canonical Entity reference.
+  - id: P2-002
+    title: SubjectSeed with field provenance
+    area: backend
+    description: Typed seed fields, origin, evidence/source refs and classification.
+    dependencies:
+    - P2-001
+    acceptance: Every seed field can explain where it came from.
+  - id: P2-003
+    title: Entity Registry aggregate
+    area: backend
+    description: Thin Entity, alias, canonical label, stable status and workspace scope.
+    dependencies:
+    - P1-002
+    acceptance: Entity contains identity only, not case allegations.
+  - id: P2-004
+    title: Secure Identifier storage
+    area: security
+    description: Encrypted identifier values where needed, masked display and keyed comparison fingerprint/HMAC.
+    dependencies:
+    - P2-003
+    - P1-007
+    acceptance: Restricted identifiers never use plain hash for guessable identifiers; field-policy tests pass.
+  - id: P2-005
+    title: ResolutionSession and Candidate model
+    area: backend
+    description: Candidate lifecycle, source linkage, review session and decisions.
+    dependencies:
+    - P2-001
+    - P2-003
+    acceptance: Candidate never becomes canonical by persistence side effect.
+  - id: P2-006
+    title: MatchingSignal / ConflictSignal model
+    area: backend
+    description: Explainable signals with strength and field visibility.
+    dependencies:
+    - P2-004
+    - P2-005
+    acceptance: UI can explain match without exposing restricted value.
+  - id: P2-007
+    title: Workspace entity match query
+    area: backend
+    description: Governance-aware possible-match query against Entity Registry.
+    dependencies:
+    - P2-003
+    - P2-006
+    - P1-006
+    acceptance: Can reveal existence without leaking other Case context.
+  - id: P2-008
+    title: Atomic candidate resolution coordinator
+    area: backend
+    description: LINK_EXISTING/CREATE_NEW/REJECT/UNCERTAIN; atomic decision + entity link/create + subject resolve.
+    dependencies:
+    - P2-001
+    - P2-003
+    - P2-005
+    acceptance: No half-resolved state after failure; retries idempotent.
+  - id: P2-009
+    title: TargetProfileView read model
+    area: backend
+    description: Compose Entity + permitted Workspace Knowledge placeholder + Subject context + freshness metadata.
+    dependencies:
+    - P2-008
+    acceptance: No second Person source-of-truth table.
+  - id: P2-010
+    title: SHADOW Add Target & review UI
+    area: frontend
+    description: Create Subject, seed, candidate compare and resolution actions.
+    dependencies:
+    - P2-008
+    - P2-009
+    acceptance: User can resolve/link/create target with masked-sensitive fields.
+  - id: P2-011
+    title: Entity merge baseline
+    area: backend
+    description: Auditable survivor merge, canonical ID resolution and preserved history.
+    dependencies:
+    - P2-003
+    - P1-008
+    acceptance: Merged IDs remain resolvable; no destructive delete.
+  - id: P2-012
+    title: Entity split/reverse-merge design hook
+    area: backend
+    description: Provide merge decision artifact and reverse command contract; full complex split may remain later.
+    dependencies:
+    - P2-011
+    acceptance: Architecture supports correcting a bad merge without editing history.
+- id: P3
+  name: Workflow & Execution Runtime
+  milestone: M3 Reliable Async Runtime
+  goal: Membangun generic execution plane sebelum connector production dipasang.
+  tasks:
+  - id: P3-001
+    title: NodeDefinition registry
+    area: backend
+    description: Versioned capability templates, typed inputs/outputs, policies and presentation metadata.
+    dependencies:
+    - P0-011
+    acceptance: NodeDefinition requests capability, not connector implementation.
+  - id: P3-002
+    title: NodeInstance and InputBinding
+    area: backend
+    description: Investigation-scoped node config, typed bindings and workflow edges.
+    dependencies:
+    - P3-001
+    - P1-004
+    acceptance: Invalid typed bindings rejected before execution.
+  - id: P3-003
+    title: Run aggregate
+    area: backend
+    description: Immutable input/config/access snapshots, status, trigger, parent/retry lineage.
+    dependencies:
+    - P3-002
+    - P0-006
+    acceptance: Editing node after run does not alter historical run.
+  - id: P3-004
+    title: ExecutionAttempt aggregate
+    area: backend
+    description: Attempt lease, heartbeat, worker identity and terminal status.
+    dependencies:
+    - P3-003
+    acceptance: Infrastructure retry creates new Attempt on same Run.
+  - id: P3-005
+    title: ExecutionPlan contract
+    area: backend
+    description: Immutable worker-facing plan with capability, connector, input, limits, access context and checkpoint.
+    dependencies:
+    - P3-003
+    acceptance: No plain secrets or unrestricted DB objects in plan.
+  - id: P3-006
+    title: Outbox dispatcher to BullMQ
+    area: backend
+    description: Dispatch minimal run reference to coarse queues with safe retry.
+    dependencies:
+    - P0-007
+    - P3-003
+    acceptance: Broker outage does not roll back committed Run; replay is idempotent.
+  - id: P3-007
+    title: Connector worker runtime skeleton
+    area: worker
+    description: Consume run reference, fetch plan, create attempt, heartbeat and finish/fail.
+    dependencies:
+    - P3-004
+    - P3-005
+    - P3-006
+    acceptance: Worker has no direct business DB write.
+  - id: P3-008
+    title: Internal service authentication
+    area: security
+    description: Service identity for internal API; worker never impersonates browser user token.
+    dependencies:
+    - P1-001
+    - P3-007
+    acceptance: Unauthorized internal request rejected and auditable.
+  - id: P3-009
+    title: Checkpoint and resume primitive
+    area: backend
+    description: Opaque checkpoint with connector/checkpoint version.
+    dependencies:
+    - P3-004
+    acceptance: New Attempt can resume when connector supports it.
+  - id: P3-010
+    title: Cancellation semantics
+    area: backend
+    description: Cooperative cancel request, partial result preservation and worker signal.
+    dependencies:
+    - P3-007
+    - P3-009
+    acceptance: Cancel never silently deletes already-ingested evidence.
+  - id: P3-011
+    title: Retry taxonomy
+    area: backend
+    description: Retryable/non-retryable errors, infra retry vs user/business retry.
+    dependencies:
+    - P3-004
+    acceptance: User retry creates new Run with retryOf; infra retry does not.
+  - id: P3-012
+    title: Parent/child run orchestration
+    area: backend
+    description: Fan-out/fan-in and completion policies ALLOW_PARTIAL/REQUIRE_ALL.
+    dependencies:
+    - P3-003
+    - P3-011
+    acceptance: Partial child failure produces deterministic parent outcome.
+  - id: P3-013
+    title: SSE run progress
+    area: backend
+    description: Minimal authorized RUN_STATUS/RUN_PROGRESS events.
+    dependencies:
+    - P3-003
+    - P0-010
+    acceptance: Reconnect/refetch remains source of truth; no sensitive payload broadcast.
+  - id: P3-014
+    title: Execution failure/replay tests
+    area: quality
+    description: Crash, duplicate delivery, lease loss, outbox replay and cancel tests.
+    dependencies:
+    - P3-006
+    - P3-007
+    - P3-011
+    acceptance: At-least-once execution does not create duplicate canonical effects.
+- id: P4
+  name: Source Registry, Resident Connector & Evidence
+  milestone: M4 Person Lookup End-to-End
+  goal: Menghasilkan vertical slice pertama dari SHADOW ke Hono Resident API hingga candidate dengan provenance.
+  tasks:
+  - id: P4-001
+    title: Source Registry domain
+    area: backend
+    description: DataSourceDefinition, ConnectorDefinition, Capability, source policy/trust and execution profile.
+    dependencies:
+    - P1-007
+    acceptance: DataSource, Connector and Capability remain separate concepts.
+  - id: P4-002
+    title: Connector resolution policy
+    area: backend
+    description: Resolve eligible connector based on capability, governance, availability and preference.
+    dependencies:
+    - P4-001
+    - P1-005
+    acceptance: Restricted connector cannot be selected without permission/reason context.
+  - id: P4-003
+    title: Connector SDK
+    area: worker
+    description: Standard validate/execute context, cancellation, progress, result envelope and error taxonomy.
+    dependencies:
+    - P3-007
+    - P4-001
+    acceptance: Connector implementations pass contract tests.
+  - id: P4-004
+    title: Restricted worker routing
+    area: security
+    description: connector.restricted queue/profile and separate network/secret permissions.
+    dependencies:
+    - P3-006
+    - P4-001
+    acceptance: General worker cannot reach restricted Resident API.
+  - id: P4-005
+    title: Resident Hono connector
+    area: worker
+    description: Semantic Person Lookup client; no Elasticsearch DSL; normalize source envelope only.
+    dependencies:
+    - P4-003
+    - P4-004
+    acceptance: Platform only calls Hono; timeout/rate-limit/error mapping tested.
+  - id: P4-006
+    title: Evidence SourceRecord model
+    area: backend
+    description: Immutable source metadata, run/connector/source lineage and payload reference policy.
+    dependencies:
+    - P3-003
+    - P4-001
+    acceptance: Every evidence path can trace back to source + run.
+  - id: P4-007
+    title: Observation model and normalization entrypoint
+    area: backend
+    description: PersonObservation/ActivityObservation structure and observed-at semantics.
+    dependencies:
+    - P4-006
+    acceptance: Observation states what source reported, not canonical truth.
+  - id: P4-008
+    title: Idempotent source-batch ingestion
+    area: backend
+    description: Internal batch API, batch idempotency and record identity dedupe.
+    dependencies:
+    - P4-006
+    - P3-008
+    acceptance: Duplicate batch delivery has same effect.
+  - id: P4-009
+    title: Raw payload retention enforcement
+    area: security
+    description: Persist/omit/redact raw based on DataSource policy and classification.
+    dependencies:
+    - P4-001
+    - P4-006
+    - P1-007
+    acceptance: Resident raw persistence defaults to policy-minimized behavior.
+  - id: P4-010
+    title: Resident result → PersonCandidate processing
+    area: backend
+    description: Convert allowed observations into Resolution candidates with source trust separated from match confidence.
+    dependencies:
+    - P4-007
+    - P2-005
+    acceptance: ES/source relevance never becomes identity confidence.
+  - id: P4-011
+    title: Person Lookup NodeDefinition
+    area: backend
+    description: Capability PERSON_LOOKUP, config schema, review policy and source preference.
+    dependencies:
+    - P3-001
+    - P4-002
+    acceptance: Node remains source-agnostic.
+  - id: P4-012
+    title: SHADOW Person Lookup end-to-end
+    area: fullstack
+    description: Run lookup, stream status, show candidates, resolve to Entity, show provenance.
+    dependencies:
+    - P4-005
+    - P4-008
+    - P4-010
+    - P2-010
+    - P3-013
+    acceptance: North-star identity slice works without direct ES access.
+  - id: P4-013
+    title: Restricted access audit
+    area: security
+    description: Durable RESTRICTED_SOURCE_QUERY audit with actor/case/run/reason, no raw NIK.
+    dependencies:
+    - P4-012
+    - P1-008
+    acceptance: Audit trail supports compliance without leaking restricted values.
+- id: P5
+  name: Knowledge & ECHO MVP
+  milestone: M5 Curated Knowledge Graph
+  goal: Membangun Case/Workspace Knowledge dan ECHO graph tanpa menjadikan graph database sebagai source of truth.
+  tasks:
+  - id: P5-001
+    title: Claim aggregate
+    area: backend
+    description: Case/Workspace scope, predicate/object, status, evidence links and revision.
+    dependencies:
+    - P2-003
+    - P4-006
+    acceptance: Conflicting claims can coexist and preserve provenance.
+  - id: P5-002
+    title: Relationship aggregate
+    area: backend
+    description: Entity-to-Entity typed relation, scope, temporal validity, status and evidence links.
+    dependencies:
+    - P2-003
+    - P4-006
+    acceptance: Relationship validates canonical Entity refs.
+  - id: P5-003
+    title: Relationship ontology registry
+    area: backend
+    description: Controlled predicates and semantics from ontology document.
+    dependencies:
+    - P5-002
+    acceptance: Unknown/ambiguous predicate cannot silently bypass ontology.
+  - id: P5-004
+    title: Knowledge promotion
+    area: backend
+    description: Explicit Case → Workspace artifact with lineage and decision.
+    dependencies:
+    - P5-001
+    - P5-002
+    - P1-005
+    acceptance: Case confirmation never mutates scope into Workspace implicitly.
+  - id: P5-005
+    title: Knowledge revision/revocation
+    area: backend
+    description: History-preserving revision/revoke with affected-case signals.
+    dependencies:
+    - P5-004
+    acceptance: Old findings remain tied to historical revision.
+  - id: P5-006
+    title: Knowledge conflict detection baseline
+    area: backend
+    description: Flag contradictory values/relations for review without deleting either.
+    dependencies:
+    - P5-001
+    - P5-002
+    acceptance: Conflict appears as review state, not last-write-wins.
+  - id: P5-007
+    title: ECHO graph read model
+    area: backend
+    description: Entity nodes plus Workspace Knowledge, Case Knowledge and candidate layers.
+    dependencies:
+    - P5-001
+    - P5-002
+    - P2-003
+    acceptance: Read model can be rebuilt from canonical relational state.
+  - id: P5-008
+    title: ECHO graph UI foundation
+    area: frontend
+    description: Layered graph, inspector, filters, solid/dashed candidate styling and case context.
+    dependencies:
+    - P5-007
+    acceptance: User can distinguish knowledge vs candidate visually.
+  - id: P5-009
+    title: Relationship candidate review UI
+    area: frontend
+    description: Confirm/reject/investigate candidate relation with evidence context.
+    dependencies:
+    - P5-008
+    acceptance: Confirm creates Case Relationship only after explicit action.
+  - id: P5-010
+    title: Merge/identity review in ECHO
+    area: frontend
+    description: Compare entities, merge decision and history display.
+    dependencies:
+    - P2-011
+    - P5-008
+    acceptance: User sees why merge happened and can identify survivor.
+  - id: P5-011
+    title: Activity overlay contract stub
+    area: backend
+    description: ActivityCorrelationSummary contract without high-volume implementation yet.
+    dependencies:
+    - P5-007
+    acceptance: ECHO can add overlay later without changing knowledge ownership.
+- id: P6
+  name: Dataset & Analysis Foundation
+  milestone: M6 Reproducible Analysis
+  goal: Menjamin analysis reproducible dan tidak menulis langsung ke Evidence/Knowledge.
+  tasks:
+  - id: P6-001
+    title: DatasetSnapshot aggregate
+    area: backend
+    description: Immutable membership, lineage, item count and readiness lifecycle.
+    dependencies:
+    - P4-006
+    acceptance: READY snapshot membership cannot mutate.
+  - id: P6-002
+    title: DatasetView aggregate
+    area: backend
+    description: Dynamic filter/view distinct from snapshot.
+    dependencies:
+    - P6-001
+    acceptance: Analysis cannot accept mutable view without snapshot conversion.
+  - id: P6-003
+    title: Completeness model
+    area: backend
+    description: COMPLETE/PARTIAL/UNKNOWN with explicit reason codes.
+    dependencies:
+    - P6-001
+    acceptance: Analysis/result UI can surface input limitations.
+  - id: P6-004
+    title: AttributionContext model
+    area: backend
+    description: Represent account/entity attribution certainty on dataset inputs.
+    dependencies:
+    - P6-001
+    - P2-003
+    acceptance: Analysis cannot silently overclaim Person ownership of uncertain account.
+  - id: P6-005
+    title: AnalysisDefinition registry
+    area: backend
+    description: Versioned analysis keys, input/output contract and config schema.
+    dependencies:
+    - P3-001
+    acceptance: Definition semantic version separated from resource revision.
+  - id: P6-006
+    title: Analysis request control-plane
+    area: backend
+    description: Create analysis metadata + Run for immutable dataset snapshot.
+    dependencies:
+    - P6-001
+    - P6-005
+    - P3-003
+    acceptance: Returns 202 + runId; input snapshot preserved.
+  - id: P6-007
+    title: Intelligence worker runtime
+    area: worker
+    description: Fetch analysis plan, execute handler, register results/artifacts through internal API.
+    dependencies:
+    - P6-006
+    - P3-008
+    acceptance: No direct canonical DB write.
+  - id: P6-008
+    title: AnalysisResult persistence
+    area: backend
+    description: Immutable model/version/config/input lineage and artifact refs.
+    dependencies:
+    - P6-007
+    acceptance: Multiple model versions can coexist for same Evidence.
+  - id: P6-009
+    title: Basic entity extraction analysis
+    area: worker
+    description: Extract entity mentions as candidates with evidence offsets/refs where available.
+    dependencies:
+    - P6-008
+    - P2-005
+    acceptance: Extraction creates Candidate, never canonical Entity.
+  - id: P6-010
+    title: Basic sentiment analysis capability
+    area: worker
+    description: Per-item + aggregate result with model metadata.
+    dependencies:
+    - P6-008
+    acceptance: Result never mutates Evidence.sentiment.
+  - id: P6-011
+    title: Analysis lineage UI
+    area: frontend
+    description: Show dataset completeness, model/version, source evidence and caveats.
+    dependencies:
+    - P6-008
+    acceptance: Analyst can answer 'how was this result produced?'.
+- id: P7
+  name: Monitoring & SPECTRA MVP
+  milestone: M7 Continuous Intelligence
+  goal: Membangun monitoring loop yang menggunakan execution/evidence/analysis foundation yang sama.
+  tasks:
+  - id: P7-001
+    title: MonitoringTarget aggregate
+    area: backend
+    description: Case-scoped target referencing Entity when possible.
+    dependencies:
+    - P2-003
+    acceptance: No copied SocialAccount profile as monitoring truth.
+  - id: P7-002
+    title: MonitoringSchedule
+    area: backend
+    description: Recurring schedule metadata and due-state; no connector-specific engine.
+    dependencies:
+    - P7-001
+    - P3-003
+    acceptance: Due schedule creates standard Run through execution pipeline.
+  - id: P7-003
+    title: MonitoringRule versioning
+    area: backend
+    description: Versioned condition/config/severity and enable state.
+    dependencies:
+    - P7-001
+    acceptance: Historical alerts retain rule version.
+  - id: P7-004
+    title: Alert aggregate
+    area: backend
+    description: Lifecycle OPEN/ACKNOWLEDGED/INVESTIGATING/RESOLVED/DISMISSED and resource lineage.
+    dependencies:
+    - P7-003
+    acceptance: Alert is not Finding.
+  - id: P7-005
+    title: Alert grouping/dedup
+    area: backend
+    description: Incident key/group repeated evaluations into one active issue where appropriate.
+    dependencies:
+    - P7-004
+    acceptance: 15-minute schedule does not create duplicate incident spam.
+  - id: P7-006
+    title: Monitoring scheduler/dispatcher
+    area: backend
+    description: Find due schedules and request normal Workflow/Execution runs.
+    dependencies:
+    - P7-002
+    - P3-006
+    acceptance: No direct connector call from Monitoring module.
+  - id: P7-007
+    title: Social/news connector MVP
+    area: worker
+    description: Implement at least one authorized high-value source after its specific API contract is available.
+    dependencies:
+    - P4-003
+    - P7-006
+    acceptance: Connector follows SDK, rate limit and source policy.
+  - id: P7-008
+    title: Activity Evidence normalization
+    area: backend
+    description: Post/reply/mention/repost evidence, versions, tombstones and engagement snapshots.
+    dependencies:
+    - P4-007
+    - P7-007
+    acceptance: Edited/deleted content history preserved.
+  - id: P7-009
+    title: Monitoring dataset materialization
+    area: backend
+    description: Create immutable snapshot per monitoring collection window/run.
+    dependencies:
+    - P7-008
+    - P6-001
+    acceptance: Completeness propagated from connector/run.
+  - id: P7-010
+    title: Rule evaluation from AnalysisResult
+    area: backend
+    description: Evaluate monitoring rules against analysis/baseline, not mutate analysis result.
+    dependencies:
+    - P7-003
+    - P6-008
+    acceptance: Alert lineage points to analysis + rule version.
+  - id: P7-011
+    title: SPECTRA overview UI
+    area: frontend
+    description: Targets, alerts, recent activity, news, sentiment and top engagement summaries.
+    dependencies:
+    - P7-004
+    - P7-008
+    - P6-010
+    acceptance: Detailed source provenance remains accessible.
+  - id: P7-012
+    title: SPECTRA activity explorer
+    area: frontend
+    description: Cursor-paginated activity filters, evidence detail and timeline.
+    dependencies:
+    - P7-008
+    acceptance: High-volume list does not load entire dataset into browser.
+  - id: P7-013
+    title: SPECTRA alert workflow
+    area: frontend
+    description: Acknowledge/investigate/resolve/dismiss with audit.
+    dependencies:
+    - P7-004
+    - P1-008
+    acceptance: All status actions use canonical monitoring API.
+  - id: P7-014
+    title: Baseline/trend analysis
+    area: worker
+    description: Simple historical baseline and spike/trend result with explicit input window.
+    dependencies:
+    - P6-008
+    - P7-009
+    acceptance: No hidden changing baseline; version/input window visible.
+- id: P8
+  name: Recursive Discovery & Cross-App Loop
+  milestone: M8 Investigation Intelligence Loop
+  goal: Membuat hasil SPECTRA/ECHO dapat menjadi subject baru tanpa kehilangan provenance atau membuat canonical truth otomatis.
+  tasks:
+  - id: P8-001
+    title: Profile Inbox read model
+    area: backend
+    description: Unify unresolved subjects, candidates and discoveries into SHADOW inbox.
+    dependencies:
+    - P2-005
+    - P6-009
+    acceptance: Read model does not become new source-of-truth aggregate.
+  - id: P8-002
+    title: RelationshipCandidate first-class contract
+    area: backend
+    description: Entity/candidate endpoints, signals, evidence and review status.
+    dependencies:
+    - P6-009
+    - P5-002
+    acceptance: Candidate relation can reference unresolved target.
+  - id: P8-003
+    title: Investigate-target orchestration
+    area: backend
+    description: Create Subject/Seed from RelationshipCandidate with provenance.
+    dependencies:
+    - P8-001
+    - P8-002
+    - P2-001
+    acceptance: One command creates consistent SHADOW subject; no frontend multi-write race.
+  - id: P8-004
+    title: Candidate rebind after subject resolution
+    area: backend
+    description: Resolve candidate endpoint to PERSON-B while preserving original lineage.
+    dependencies:
+    - P8-003
+    - P2-008
+    acceptance: Rebind does not confirm relationship.
+  - id: P8-005
+    title: DeepLinkTarget resolver
+    area: frontend
+    description: Semantic cross-product routing preserving workspace/case/resource context.
+    dependencies:
+    - P1-009
+    acceptance: No business domain stores physical app URL.
+  - id: P8-006
+    title: ECHO ↔ SHADOW handoff
+    area: frontend
+    description: Investigate unknown relation target and return to updated graph.
+    dependencies:
+    - P8-003
+    - P8-005
+    acceptance: User remains in same Case context.
+  - id: P8-007
+    title: SPECTRA ↔ SHADOW/ECHO handoff
+    area: frontend
+    description: Investigate extracted entity; explore analysis/correlation in ECHO.
+    dependencies:
+    - P8-001
+    - P8-005
+    acceptance: No payload copy across product boundaries.
+  - id: P8-008
+    title: Recursive discovery E2E test
+    area: quality
+    description: Known A → news/evidence → B candidate → Subject B → Entity B → relation review.
+    dependencies:
+    - P8-003
+    - P8-004
+    - P5-009
+    acceptance: Reference flow passes with full provenance and cross-case isolation.
+- id: P9
+  name: Hypothesis & Finding Reasoning Layer
+  milestone: M9 Defensible Case Intelligence
+  goal: Mengubah evidence/analysis menjadi reasoning dan analyst-approved finding yang defensible.
+  tasks:
+  - id: P9-001
+    title: Hypothesis aggregate
+    area: backend
+    description: Statement, lifecycle, assessment, confidence and subject refs.
+    dependencies:
+    - P1-003
+    acceptance: Hypothesis remains Case-scoped and is never canonical Knowledge.
+  - id: P9-002
+    title: Hypothesis resource links
+    area: backend
+    description: SUPPORTS/CONTRADICTS/CONTEXT/QUALIFIES with strength and notes.
+    dependencies:
+    - P9-001
+    - P4-006
+    acceptance: Contradictory evidence is first-class.
+  - id: P9-003
+    title: Hypothesis assessment history
+    area: backend
+    description: Assessment/confidence/rationale revisions without silent overwrite.
+    dependencies:
+    - P9-001
+    acceptance: Review can reconstruct how conclusion changed.
+  - id: P9-004
+    title: Finding aggregate
+    area: backend
+    description: Type, statement, rationale, lifecycle, confidence, subject/time context.
+    dependencies:
+    - P1-003
+    acceptance: Finding remains Case-scoped.
+  - id: P9-005
+    title: Finding resource links with revision pinning
+    area: backend
+    description: Support/contradict/context/qualify links to immutable result or resource revision.
+    dependencies:
+    - P9-004
+    - P4-006
+    - P6-008
+    acceptance: Approved finding can be reconstructed later.
+  - id: P9-006
+    title: Finding review workflow
+    area: backend
+    description: Submit review, APPROVE/REQUEST_CHANGES/REJECT, governance hook.
+    dependencies:
+    - P9-004
+    - P1-005
+    acceptance: Approved state only via review decision.
+  - id: P9-007
+    title: Finding supersede/retract
+    area: backend
+    description: Immutable-ish approved finding corrected through explicit lineage.
+    dependencies:
+    - P9-006
+    acceptance: No silent edits after approval.
+  - id: P9-008
+    title: Create finding from hypothesis
+    area: backend
+    description: Convenience orchestration that preserves links but leaves draft human-owned.
+    dependencies:
+    - P9-001
+    - P9-004
+    acceptance: No automatic approval from supported hypothesis.
+  - id: P9-009
+    title: SHADOW findings UI
+    area: frontend
+    description: Draft/review/approved views, rationale, supporting and contradicting material.
+    dependencies:
+    - P9-006
+    acceptance: Reviewer sees contradictions before approval.
+  - id: P9-010
+    title: ECHO hypothesis mapping UI
+    area: frontend
+    description: Map hypothesis to entities/evidence/relationships without mutating knowledge graph.
+    dependencies:
+    - P9-002
+    - P5-008
+    acceptance: Reasoning layer visually distinct from Knowledge layer.
+  - id: P9-011
+    title: SPECTRA create-hypothesis/draft-finding actions
+    area: frontend
+    description: Create analyst-owned reasoning artifact from alert/analysis with conservative wording.
+    dependencies:
+    - P7-011
+    - P9-001
+    - P9-004
+    acceptance: Machine output never creates approved finding.
+  - id: P9-012
+    title: Case intelligence feed integration
+    area: backend
+    description: Finding/hypothesis milestones emit IntelligenceHighlight.
+    dependencies:
+    - P9-006
+    acceptance: Feed records intelligence milestones, not audit/log noise.
+- id: P10
+  name: Search Projection & Indexing
+  milestone: M10 Fast Investigation Search
+  goal: Menyediakan search/read performance tanpa menjadikan Elasticsearch canonical store.
+  tasks:
+  - id: P10-001
+    title: Investigation search schemas
+    area: backend
+    description: Versioned index mappings for authorized Entity/Evidence/Finding searchable projections.
+    dependencies:
+    - P2-003
+    - P4-006
+    - P9-004
+    acceptance: No Resident raw index bulk copy.
+  - id: P10-002
+    title: Projection outbox events
+    area: backend
+    description: Emit rebuildable index events from canonical changes.
+    dependencies:
+    - P0-007
+    acceptance: Canonical transaction succeeds independently from ES availability.
+  - id: P10-003
+    title: Indexing worker
+    area: worker
+    description: Consume projection events, idempotently update Investigation Elasticsearch.
+    dependencies:
+    - P10-001
+    - P10-002
+    acceptance: Replay can rebuild index safely.
+  - id: P10-004
+    title: Governance-aware search query
+    area: backend
+    description: Scope/classification filters applied before disclosure; no ES DSL passthrough.
+    dependencies:
+    - P1-005
+    - P10-003
+    acceptance: Cross-case restricted result does not leak title/snippet.
+  - id: P10-005
+    title: Workspace Target Profile search
+    area: backend
+    description: Fast entity/profile search with masked match metadata.
+    dependencies:
+    - P10-004
+    - P2-009
+    acceptance: Supports reuse-first Add Target UX.
+  - id: P10-006
+    title: Generic platform search
+    area: backend
+    description: Search Entity/Evidence/Finding with typed ResourceRef results and cursor.
+    dependencies:
+    - P10-004
+    acceptance: ES _score never exposed as identity confidence.
+  - id: P10-007
+    title: Projection freshness metadata
+    area: backend
+    description: generatedAt/projectionRevision/isStale on applicable read models.
+    dependencies:
+    - P10-003
+    acceptance: UI can distinguish eventual-consistency lag.
+  - id: P10-008
+    title: Search/load benchmarks
+    area: quality
+    description: Benchmark common search patterns and prevent expensive unbounded queries.
+    dependencies:
+    - P10-006
+    acceptance: Performance budget and access filtering validated under representative volume.
+- id: P11
+  name: Hardening & Production Readiness
+  milestone: M11 Production Candidate
+  goal: Membuktikan security, reliability, recoverability, performance, operations dan release safety.
+  tasks:
+  - id: P11-001
+    title: Threat-model review and abuse cases
+    area: security
+    description: Update STRIDE-style model across API, workers, connectors, object store, search and cross-case flows.
+    dependencies:
+    - P10-008
+    acceptance: All high risks have mitigation/owner or explicit accepted risk.
+  - id: P11-002
+    title: Authorization matrix integration tests
+    area: security
+    description: Workspace/case/cross-case/field/source/export permission permutations.
+    dependencies:
+    - P1-006
+    - P4-013
+    - P10-004
+    acceptance: No critical IDOR or sensitive-field disclosure.
+  - id: P11-003
+    title: Security headers and web hardening
+    area: security
+    description: CSP, secure cookies where applicable, CSRF model, XSS-safe evidence rendering and upload/download controls.
+    dependencies:
+    - P1-009
+    acceptance: Stored source content cannot execute arbitrary browser script.
+  - id: P11-004
+    title: Connector SSRF/egress hardening
+    area: security
+    description: Allowlisted destinations, DNS/IP controls where relevant, timeout/body limits and redirect policy.
+    dependencies:
+    - P4-003
+    acceptance: Connector input cannot turn runtime into generic proxy.
+  - id: P11-005
+    title: Secrets and key rotation procedure
+    area: security
+    description: Secret inventory, rotation runbook, least privilege service identities and no secret in telemetry.
+    dependencies:
+    - P4-004
+    acceptance: Rotation tested without data loss.
+  - id: P11-006
+    title: Dependency/supply-chain controls
+    area: devops
+    description: Lockfile integrity, vulnerability scanning, SBOM/artifact provenance and controlled updates.
+    dependencies:
+    - P0-013
+    acceptance: Critical dependency findings block release or have approved exception.
+  - id: P11-007
+    title: Performance/load test suite
+    area: quality
+    description: CRUD/read-model/search/ingestion/queue/SSE representative tests with documented budgets.
+    dependencies:
+    - P10-008
+    acceptance: No release if critical SLO regression exceeds agreed budget.
+  - id: P11-008
+    title: Backpressure and overload behavior
+    area: backend
+    description: Queue limits, rate limiting, concurrency controls, payload limits and graceful degradation.
+    dependencies:
+    - P11-007
+    - P3-006
+    acceptance: Overload does not cause unbounded memory/DB growth.
+  - id: P11-009
+    title: Backup/restore and DR test
+    area: devops
+    description: PostgreSQL/object/search rebuild/Redis assumptions documented and restore drill executed.
+    dependencies:
+    - P10-003
+    acceptance: Canonical DB + object store restore verified; search rebuildable.
+  - id: P11-010
+    title: Retention and purge jobs
+    area: security
+    description: Classification-aware lifecycle, hold support and auditable purge.
+    dependencies:
+    - P1-007
+    - P4-009
+    acceptance: Purge never removes held resources or audit-required records.
+  - id: P11-011
+    title: Export governance and watermarking baseline
+    area: backend
+    description: Authorized export job, redaction, signed URL, audit and expiry.
+    dependencies:
+    - P1-005
+    - P9-004
+    acceptance: Export cannot bypass field/case classification policy.
+  - id: P11-012
+    title: Operational dashboards and alerts
+    area: devops
+    description: API error/latency, outbox lag, queue lag, worker failure, connector rate-limit, ingestion, analysis and schedule
+      lag.
+    dependencies:
+    - P0-010
+    acceptance: On-call can identify failing layer via runId/traceId.
+  - id: P11-013
+    title: Incident response runbook
+    area: docs
+    description: Triage by requestId/runId, connector outage, queue backlog, auth outage, data leak suspicion and rollback.
+    dependencies:
+    - P11-012
+    acceptance: Runbook tested in tabletop exercise.
+  - id: P11-014
+    title: Release/rollback strategy
+    area: devops
+    description: Backward-compatible migration order, canary/staged deployment where possible and rollback playbook.
+    dependencies:
+    - P11-009
+    acceptance: Application rollback does not require unsafe destructive DB rollback.
+  - id: P11-015
+    title: Architecture compliance audit
+    area: quality
+    description: Run architecture gates, dependency graph, data ownership and anti-pattern review before production candidate.
+    dependencies:
+    - P0-013
+    acceptance: No known critical architecture gate violation.

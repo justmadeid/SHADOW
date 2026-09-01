@@ -1,0 +1,26 @@
+version: 1
+domain_invariants:
+- candidate_is_not_entity
+- subject_is_not_entity
+- evidence_is_not_truth
+- analysis_is_not_knowledge
+- alert_is_not_finding
+- case_confirmation_is_not_workspace_promotion
+- entity_workspace_scoped_evidence_case_scoped
+- human_review_for_high_risk_attribution
+- history_and_provenance_are_non_destructive
+dependency_rules:
+  frontend:
+  - shadow_must_not_import_echo_internals
+  - echo_must_not_import_spectra_internals
+  - spectra_must_not_import_shadow_internals
+  backend:
+  - cross_module_import_public_entrypoints_only
+  - no_cross_module_repository_import
+  - no_cross_module_mutation_sql
+  - workers_no_direct_business_db_write
+data_rules:
+- resident_data_only_via_hono_connector
+- elasticsearch_projection_not_truth
+- restricted_values_not_in_logs_metrics_queue
+- bulk_data_by_batch_or_reference

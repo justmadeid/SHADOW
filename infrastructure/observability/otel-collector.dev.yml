@@ -1,0 +1,80 @@
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 256
+    spike_limit_mib: 64
+
+  batch:
+    timeout: 1s
+    send_batch_size: 512
+
+  attributes/drop-sensitive:
+    actions:
+      - key: http.request.header.authorization
+        action: delete
+      - key: enduser.email
+        action: delete
+      - key: user.email
+        action: delete
+      - key: national_id
+        action: delete
+      - key: nik
+        action: delete
+      - key: phone
+        action: delete
+
+exporters:
+  otlp/jaeger:
+    endpoint: jaeger:4317
+    tls:
+      insecure: true
+
+  debug:
+    verbosity: basic
+
+service:
+  extensions:
+    - health_check
+
+  pipelines:
+    traces:
+      receivers:
+        - otlp
+      processors:
+        - memory_limiter
+        - attributes/drop-sensitive
+        - batch
+      exporters:
+        - otlp/jaeger
+
+    metrics:
+      receivers:
+        - otlp
+      processors:
+        - memory_limiter
+        - attributes/drop-sensitive
+        - batch
+      exporters:
+        - debug
+
+    logs:
+      receivers:
+        - otlp
+      processors:
+        - memory_limiter
+        - attributes/drop-sensitive
+        - batch
+      exporters:
+        - debug

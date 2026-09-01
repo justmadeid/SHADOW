@@ -1,0 +1,27 @@
+{
+  "name": "intelligence-platform-codex-bootstrap-v3.1",
+  "status": "m0-validation-pending-initial-commit-remote-pr",
+  "does_not_claim": "M0 Engineering Ready",
+  "mandatory_missing": [],
+  "json_errors": [],
+  "apps": [
+    "connector-worker",
+    "indexing-worker",
+    "intelligence-worker",
+    "platform-api",
+    "platform-web"
+  ],
+  "packages": [
+    "api-client",
+    "auth",
+    "canvas-kit",
+    "config",
+    "connector-sdk",
+    "contracts",
+    "database",
+    "observability",
+    "testing",
+    "ui"
+  ],
+  "file_count": 209
+}

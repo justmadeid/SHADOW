@@ -1,0 +1,26 @@
+version: 1
+blocking:
+  pull_request:
+  - format
+  - lint
+  - typecheck
+  - module_boundary_check
+  - product_boundary_check
+  - unit_tests
+  - affected_integration_tests
+  - openapi_validation
+  - migration_validation
+  - secret_scan
+  release:
+  - no_critical_security_issue
+  - no_high_broken_access_control_or_sensitive_data_issue
+  - migration_compatibility_reviewed
+  - rollback_plan_present
+  - critical_reference_flows_pass
+  - architecture_compliance_audit_pass
+conditional:
+- connector_contract_tests
+- security_negative_tests
+- load_test
+- search_projection_test
+- e2e_reference_flow

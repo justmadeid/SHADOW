@@ -1,0 +1,151 @@
+{
+  "name": "intelligence-platform-codex-precode-docs-v2.1",
+  "clarification": "leaked-service == Hono Person Lookup API; duplicate source/connector removed",
+  "includes_design_through": "SHADOW Investigation Resource Canvas Specification v1",
+  "pending_design_specs": [
+    "Activity Timeline Design Specification",
+    "Geospatial Map Design Specification"
+  ],
+  "files": [
+    {
+      "path": ".env.sources.example",
+      "sha256": "a10b1da579f846fa582935b58c3f2302b71b6b5be05d096dbff43bb3bb20f5a2",
+      "size": 563
+    },
+    {
+      "path": "AGENTS.md",
+      "sha256": "29ebc962bf25360fabd13dadd3abbc228a361e4a429f2dd0ebef5a3eab662a58",
+      "size": 2996
+    },
+    {
+      "path": "CODEX_START_HERE.md",
+      "sha256": "0c17a59d00b981ec6b73721765576ba288b5428206aff5687944fd1fa0e4e081",
+      "size": 4318
+    },
+    {
+      "path": "README.md",
+      "sha256": "842f6d73b98924a8633d667028914f5f329c68382953a78b785b20de53ed247b",
+      "size": 1433
+    },
+    {
+      "path": "SECURITY.md",
+      "sha256": "95271fd7793f2e6595760cccc371a1bdd8b669671271aae86009f7fae413cc77",
+      "size": 1115
+    },
+    {
+      "path": "docs/engineering/20_DEVELOPMENT_BACKLOG_V1.md",
+      "sha256": "f52d42f14c955cf95100015120db28db0375a81502448f999687fde20d0a8483",
+      "size": 38609
+    },
+    {
+      "path": "docs/engineering/22_ENGINEERING_STANDARDS.md",
+      "sha256": "8549cb21f0c52d50c95dc7abc15079580421a486d492ba4134d22edb4eeea617",
+      "size": 4534
+    },
+    {
+      "path": "docs/engineering/23_SECURITY_ENGINEERING_BASELINE.md",
+      "sha256": "5b34af62953d5a13ce34197ec98bddfc67cde77d9546a2080a6348ecb1301f20",
+      "size": 4034
+    },
+    {
+      "path": "docs/engineering/25_TEST_STRATEGY.md",
+      "sha256": "9bc6352ce4297a15f688013774f103fe95dfbf4c139171f19993adf0925d73f0",
+      "size": 2910
+    },
+    {
+      "path": "docs/engineering/30_AI_AGENT_DEVELOPMENT_PLAYBOOK.md",
+      "sha256": "995a507dbcb8659ae5c23dee637067b04f2d29dc7c23da5c53c00cadc53e6681",
+      "size": 3873
+    },
+    {
+      "path": "docs/engineering/32_DEFINITION_OF_DONE.md",
+      "sha256": "5221e7bedb79781b42ef93ea8f5698fe8c721d47d1b8577b20a3811d5e3ffe52",
+      "size": 2019
+    },
+    {
+      "path": "docs/engineering/36_FRONTEND_PRODUCT_BOUNDARY_GUIDE.md",
+      "sha256": "28d29117e7922e0a46ab0eb26ef2d6bd178f042951e5a453922318da2d28c234",
+      "size": 1991
+    },
+    {
+      "path": "docs/engineering/CODEX_FIRST_PROMPT_V2.md",
+      "sha256": "d306d0e2ebe4dc08e589d1e8802a3d0a968f0e9f60ba1a7619033d5e947fb12d",
+      "size": 1868
+    },
+    {
+      "path": "docs/engineering/M0_ENGINEERING_READY_GATE.md",
+      "sha256": "92b083695020ace692ea50c97a3ba63d61a8c8183000d58a13c5cdbea002dedd",
+      "size": 2210
+    },
+    {
+      "path": "docs/environment/LOCAL_SERVICE_DISCOVERY_CHECKLIST.md",
+      "sha256": "d4f1d080111b7ca643c7207e97604362783362d3f0d11430dd27c4d9cf43a165",
+      "size": 2011
+    },
+    {
+      "path": "docs/environment/OSINT_ENVIRONMENT_CONTEXT.md",
+      "sha256": "17f80b92438f7dd175ea97e06da2e6a24d644b92e0172593a3b6bb0ec2be8441",
+      "size": 4608
+    },
+    {
+      "path": "docs/environment/OSINT_INDUSTRIES_CONNECTOR_PLAN.md",
+      "sha256": "3ac43dcdd225dc6b7a4ea37f3fe34d6449082bdcf010cef1747b72047b2da765",
+      "size": 4470
+    },
+    {
+      "path": "docs/environment/SOURCE_IDENTITY_CLARIFICATION.md",
+      "sha256": "2fc869f49d2aeee292ce21553584f13a896fbafcfb4f231711fbfd545a0e6c56",
+      "size": 1105
+    },
+    {
+      "path": "docs/environment/SOURCE_NORMALIZATION_STRATEGY.md",
+      "sha256": "36d270e10686fecb1a9e2b6e03fd8562219c565d0a1c97bb0990cf478c1082df",
+      "size": 2735
+    },
+    {
+      "path": "docs/environment/source-inventory.yaml",
+      "sha256": "1f005bc93979748937d4bee144099e841f5c27a9a0fb7ccac3a60cfae6f3828d",
+      "size": 2373
+    },
+    {
+      "path": "docs/product/00_PRODUCT_PITCH_AND_SYSTEM_OVERVIEW.md",
+      "sha256": "fa361875dd182c0734044b6045c8f493880480b18b01772d7b53ff5f189086c7",
+      "size": 33043
+    },
+    {
+      "path": "docs/product/shadow/00_SHADOW_PRODUCT_DIRECTION.md",
+      "sha256": "3c9884b5233e5e7d239e781cd2a6ca36d6c438ee17f468bee7f7cebb94d0f814",
+      "size": 2668
+    },
+    {
+      "path": "docs/product/shadow/01_INFORMATION_ARCHITECTURE_V1.md",
+      "sha256": "3a14da1cd93f13d662eed85121a62818eb81eaafe5a1fec116c9cf72fbbf974f",
+      "size": 4098
+    },
+    {
+      "path": "docs/product/shadow/02_DESIGN_SYSTEM_V1.md",
+      "sha256": "87ab3b869f84801fd3380cc767df5b7c858b5d5f9e05b50259e3035db9ccc957",
+      "size": 5064
+    },
+    {
+      "path": "docs/product/shadow/03_TARGET_PROFILE_V2_SPEC.md",
+      "sha256": "691a08ae5d5718c1acc755480e6f647fefbfbbf58f7493a120b76e6af34c467d",
+      "size": 23225
+    },
+    {
+      "path": "docs/product/shadow/04_ADAPTIVE_INVESTIGATION_STAGE_SPEC_V1.md",
+      "sha256": "b98ce5fd2944218f52c8dec5c908fe20b8a56a5ad1162f1505b5f5f905267683",
+      "size": 6075
+    },
+    {
+      "path": "docs/product/shadow/05_INVESTIGATION_RESOURCE_CANVAS_SPEC_V1.md",
+      "sha256": "feb8b1bf1282a46e45d5cedae37e0106e47891588159ddcd0fa7b3d2e54c4e36",
+      "size": 24793
+    },
+    {
+      "path": "docs/product/shadow/06_IMPLEMENTATION_GUARDRAILS_AND_PENDING_SPECS.md",
+      "sha256": "03ab3637ba01c1e2e67f5eefb518f896226a170a4b61534a995401dcc5eb8698",
+      "size": 4146
+    }
+  ]
+}

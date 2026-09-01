@@ -1,0 +1,11 @@
+openapi: 3.1.0
+info:
+  title: Investigation Intelligence Platform API
+  version: 1.0.0
+  description: Public Platform API contract expanded incrementally by implementation slice.
+  license:
+    name: Proprietary
+    identifier: LicenseRef-Proprietary
+servers:
+  - url: /api/v1
+paths: {}

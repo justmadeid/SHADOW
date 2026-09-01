@@ -1,0 +1,9 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Generated dependencies, build outputs, and local-only environment files"
+paths = [
+  '''(^|/)(\.git|node_modules|dist|\.next|\.turbo|coverage|test-results|playwright-report)(/|$)''',
+  '''(^|/)(pnpm-lock\.yaml|\.env|\.env\.infrastructure)$''',
+]

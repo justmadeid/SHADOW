@@ -1,0 +1,15 @@
+# Generated dependency state
+node_modules/
+pnpm-lock.yaml
+
+# Build and test output
+.next/
+.turbo/
+coverage/
+dist/
+
+# Architecture and bootstrap artifacts are reviewed as authored documents.
+*.md
+docs/
+manifest.json
+bootstrap-validation.json
