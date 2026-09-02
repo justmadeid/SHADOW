@@ -1,6 +1,6 @@
 # M0 Validation Report
 
-Date: 2026-09-01
+Date: 2026-09-03
 
 Workspace: `intelligence-platform-docs`
 
@@ -12,10 +12,15 @@ Every local requirement in the restored
 `docs/engineering/M0_ENGINEERING_READY_GATE.md` passes after the integration
 defects listed below were fixed. M0 is not declared ready because this directory
 has not yet completed the required real pull-request gate or verified branch
-protection. Commit `b2502ff` is pushed and synchronized with `origin/main` on
-GitHub. Its push-triggered Engineering Quality run `33689747880` passed every
-job, including the final `Quality Gate`; that successful push run is useful
-evidence but does not satisfy the checklist's explicit PR requirement.
+protection. Pull request `#1` was opened and merged into `main`, but its
+PR-triggered Engineering Quality run `33690630209` failed before tests ran:
+`setup-node@v5` attempted automatic pnpm cache discovery before Corepack had
+created the pnpm executable. The workflow fix disables that automatic cache;
+the explicit frozen installation remains required.
+
+The earlier push-triggered run `33689747880` passed every job, including the
+final `Quality Gate`, demonstrating that the code and explicit install path are
+otherwise healthy. It does not replace the required passing PR run.
 
 The bootstrap validation status has been reconciled now that the authoritative
 gate is present. The legacy v2.1 `manifest.json` was preserved rather than
@@ -59,10 +64,10 @@ pnpm 10.15.0 toolchain. A real GitHub PR run remains unavailable.
 | Secret scan | PASS | Pinned Gitleaks image scanned repository source; no leaks found |
 | Dependency audit | PASS | No known production dependency vulnerabilities |
 | CI definition | PASS statically | Pinned external action revisions; `actionlint` passes |
-| Git repository | PASS | Commit `b2502ff` on `main` is synchronized with GitHub `origin/main` |
+| Git repository | PASS | PR #1 merged as `87d9388` on GitHub `origin/main` |
 | CI platform alignment | PASS | GitHub Actions detects the Engineering Quality workflow |
 | CI push run | PASS | Run `33689747880`: Static, Integration, E2E, Security, and final `Quality Gate` all succeeded |
-| CI pull request run | BLOCKED | The successful run was triggered by `push`; no real pull request exists yet |
+| CI pull request run | FAIL, fix prepared | Run `33690630209`: all jobs failed at setup-node pnpm cache discovery before tests; automatic cache is now disabled |
 | Branch protection | BLOCKED | Required `Quality Gate` protection has not been verified |
 | Authoritative M0 checklist | PASS | Restored checklist read completely and reconciled line by line |
 | Bootstrap integrity metadata | PASS with legacy note | Required-file status reconciled; supplied `manifest.json` remains an explicitly legacy v2.1 manifest |
@@ -117,13 +122,15 @@ Verified API responses:
 - added Next.js-specific lint rules while keeping lint as an explicit required
   pre-build gate;
 - added a GitHub Actions workflow with a stable final `Quality Gate` job and
-  commit-pinned external actions.
+  commit-pinned external actions;
+- disabled setup-node's pre-Corepack package-manager cache discovery after PR #1
+  exposed the ordering failure.
 
 ## Remaining actions before M0 can be declared ready
 
-1. Commit the current validation-report and workflow-runtime updates on a
-   feature branch, push it, and open a real pull request into `main`.
-2. Verify the PR-triggered `Quality Gate` passes.
+1. Commit this workflow bootstrap fix on the current feature branch, push it,
+   and open a new pull request into `main`.
+2. Verify the new PR-triggered `Quality Gate` passes before merging.
 3. Require the stable `Quality Gate` on the default branch and verify it
    completes with the pinned Node 22 + pnpm 10.15.0 toolchain.
 4. Only after that real review gate passes, change the status to
