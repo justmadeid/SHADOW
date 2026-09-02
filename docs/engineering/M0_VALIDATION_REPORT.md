@@ -11,9 +11,11 @@ Status: **M0 NOT YET ENGINEERING READY**
 Every local requirement in the restored
 `docs/engineering/M0_ENGINEERING_READY_GATE.md` passes after the integration
 defects listed below were fixed. M0 is not declared ready because this directory
-has an initialized `main` branch but no commit or remote: the required GitHub
-`Quality Gate` cannot be executed on a real pull request and branch protection
-cannot be verified.
+has not yet completed the required real pull-request gate or verified branch
+protection. Commit `b2502ff` is pushed and synchronized with `origin/main` on
+GitHub. Its push-triggered Engineering Quality run `33689747880` passed every
+job, including the final `Quality Gate`; that successful push run is useful
+evidence but does not satisfy the checklist's explicit PR requirement.
 
 The bootstrap validation status has been reconciled now that the authoritative
 gate is present. The legacy v2.1 `manifest.json` was preserved rather than
@@ -57,8 +59,11 @@ pnpm 10.15.0 toolchain. A real GitHub PR run remains unavailable.
 | Secret scan | PASS | Pinned Gitleaks image scanned repository source; no leaks found |
 | Dependency audit | PASS | No known production dependency vulnerabilities |
 | CI definition | PASS statically | Pinned external action revisions; `actionlint` passes |
-| Git repository | PASS locally | Repository initialized and local branch normalized to `main` |
-| CI pull request run | BLOCKED | No initial commit, Git remote, or pull request exists yet |
+| Git repository | PASS | Commit `b2502ff` on `main` is synchronized with GitHub `origin/main` |
+| CI platform alignment | PASS | GitHub Actions detects the Engineering Quality workflow |
+| CI push run | PASS | Run `33689747880`: Static, Integration, E2E, Security, and final `Quality Gate` all succeeded |
+| CI pull request run | BLOCKED | The successful run was triggered by `push`; no real pull request exists yet |
+| Branch protection | BLOCKED | Required `Quality Gate` protection has not been verified |
 | Authoritative M0 checklist | PASS | Restored checklist read completely and reconciled line by line |
 | Bootstrap integrity metadata | PASS with legacy note | Required-file status reconciled; supplied `manifest.json` remains an explicitly legacy v2.1 manifest |
 
@@ -116,9 +121,10 @@ Verified API responses:
 
 ## Remaining actions before M0 can be declared ready
 
-1. Create the initial commit, attach the intended Git remote, push a feature
-   branch, and open a real pull request.
-2. Require the `Quality Gate` status check on the default branch and verify it
+1. Commit the current validation-report and workflow-runtime updates on a
+   feature branch, push it, and open a real pull request into `main`.
+2. Verify the PR-triggered `Quality Gate` passes.
+3. Require the stable `Quality Gate` on the default branch and verify it
    completes with the pinned Node 22 + pnpm 10.15.0 toolchain.
-3. Only after that real PR gate passes, change the status to
+4. Only after that real review gate passes, change the status to
    `M0 ENGINEERING READY`.
