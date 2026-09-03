@@ -4,29 +4,27 @@ Date: 2026-09-03
 
 Workspace: `intelligence-platform-docs`
 
-Status: **M0 NOT YET ENGINEERING READY**
+Status: **M0 — Engineering Ready**
 
 ## Decision
 
-Every local requirement in the restored
-`docs/engineering/M0_ENGINEERING_READY_GATE.md` passes after the integration
-defects listed below were fixed. M0 is not declared ready because this directory
-has not yet completed the required real pull-request gate or verified branch
-protection. Pull request `#1` was opened and merged into `main`, but its
-PR-triggered Engineering Quality run `33690630209` failed before tests ran:
-`setup-node@v5` attempted automatic pnpm cache discovery before Corepack had
-created the pnpm executable. The workflow fix disables that automatic cache;
-the explicit frozen installation remains required.
+Every requirement in
+`docs/engineering/M0_ENGINEERING_READY_GATE.md` has passed. Pull request `#2`
+merged the workflow-bootstrap correction as commit `525c8ba`; its PR-triggered
+Engineering Quality run `33692145028` passed Static, Integration, E2E,
+Security, and the final stable `Quality Gate` job.
 
-The earlier push-triggered run `33689747880` passed every job, including the
-final `Quality Gate`, demonstrating that the code and explicit install path are
-otherwise healthy. It does not replace the required passing PR run.
+The GitHub ruleset `QC` (`22152818`) is active on the default branch. It
+requires pull requests, resolved review conversations, an up-to-date branch,
+and the GitHub Actions `Quality Gate`; it also prevents branch deletion and
+force pushes. GitHub's repository API reports `main` as protected.
 
 The bootstrap validation status has been reconciled now that the authoritative
 gate is present. The legacy v2.1 `manifest.json` was preserved rather than
 rewritten as if it represented this v3.1 scaffold.
 
-No P1 domain or SHADOW feature implementation was started.
+M0 may therefore claim **M0 — Engineering Ready**. No P1 domain or SHADOW
+feature implementation was started during M0 validation.
 
 ## Validation environment
 
@@ -37,8 +35,8 @@ No P1 domain or SHADOW feature implementation was started.
 - local synthetic, ignored `.env` files only
 
 The generated lockfile uses lockfile format `9.0`. Corepack enablement, a frozen
-install, and the complete static M0 gate pass with the exact pinned Node 22 +
-pnpm 10.15.0 toolchain. A real GitHub PR run remains unavailable.
+install, and the complete M0 gate pass with the exact pinned Node 22 + pnpm
+10.15.0 toolchain both locally and in the required GitHub PR workflow.
 
 ## Gate results
 
@@ -67,8 +65,8 @@ pnpm 10.15.0 toolchain. A real GitHub PR run remains unavailable.
 | Git repository | PASS | PR #1 merged as `87d9388` on GitHub `origin/main` |
 | CI platform alignment | PASS | GitHub Actions detects the Engineering Quality workflow |
 | CI push run | PASS | Run `33689747880`: Static, Integration, E2E, Security, and final `Quality Gate` all succeeded |
-| CI pull request run | FAIL, fix prepared | Run `33690630209`: all jobs failed at setup-node pnpm cache discovery before tests; automatic cache is now disabled |
-| Branch protection | BLOCKED | Required `Quality Gate` protection has not been verified |
+| CI pull request run | PASS | PR #2 run `33692145028`: Static, Integration, E2E, Security, and final `Quality Gate` all succeeded |
+| Branch protection | PASS | Active ruleset `QC` targets the default branch; PR, resolved conversations, strict `Quality Gate`, deletion protection, and force-push protection verified via UI and GitHub API |
 | Authoritative M0 checklist | PASS | Restored checklist read completely and reconciled line by line |
 | Bootstrap integrity metadata | PASS with legacy note | Required-file status reconciled; supplied `manifest.json` remains an explicitly legacy v2.1 manifest |
 
@@ -126,12 +124,8 @@ Verified API responses:
 - disabled setup-node's pre-Corepack package-manager cache discovery after PR #1
   exposed the ordering failure.
 
-## Remaining actions before M0 can be declared ready
+## Exit decision
 
-1. Commit this workflow bootstrap fix on the current feature branch, push it,
-   and open a new pull request into `main`.
-2. Verify the new PR-triggered `Quality Gate` passes before merging.
-3. Require the stable `Quality Gate` on the default branch and verify it
-   completes with the pinned Node 22 + pnpm 10.15.0 toolchain.
-4. Only after that real review gate passes, change the status to
-   `M0 ENGINEERING READY`.
+All required M0 checks have passed, including the real pull-request workflow
+and enforced default-branch ruleset. The M0 exit rule is satisfied, and P1 Auth,
+Workspace, Case & Governance may begin after this final status update is merged.

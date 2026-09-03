@@ -1,7 +1,7 @@
 {
   "name": "intelligence-platform-codex-bootstrap-v3.1",
-  "status": "m0-validation-pending-passing-pr-and-branch-protection",
-  "does_not_claim": "M0 Engineering Ready",
+  "status": "m0-engineering-ready",
+  "claims": "M0 Engineering Ready",
   "mandatory_missing": [],
   "json_errors": [],
   "apps": [
