@@ -11,7 +11,7 @@ Milestone: **M1 — Protected Case Shell**
 | `P1-001` OIDC authentication integration | Complete; merged in PR #4 | OIDC JWT/JWKS verifier, global API guard, user/service principal propagation, public health boundary, stable 401 contract, runtime smoke, and automated negative-path coverage passed the real PR Quality Gate |
 | `P1-002` Workspace domain | Complete; merged in PR #5 | UUIDv7 Workspace aggregate, settings, initial membership/history, idempotent persistence, member-scoped reads, Outbox events, migration, and API contract passed the real PR Quality Gate |
 | `P1-003` Case domain | Complete; merged in PR #6 | UUIDv7 Case aggregate, opaque human-readable code, classification, lifecycle, optimistic concurrency, Outbox events, migration, and API contract passed the real PR and post-merge Quality Gates |
-| `P1-004` Investigation domain | Not started | Depends on P1-003 |
+| `P1-004` Investigation domain | Complete locally; PR pending | Case-scoped Investigation branch/objective, lifecycle, idempotency, optimistic concurrency, Outbox events, migration, and API contract implemented on `feat/p1-004-investigation-domain` |
 | `P1-005` Governance permission model | Not started | Depends on P1-001 and P1-002 |
 | `P1-006` Case membership policy | Not started | Depends on P1-003 and P1-005 |
 | `P1-007` Data classification primitive | Not started | Depends on P1-005 |
@@ -140,3 +140,44 @@ boot smoke confirmed every Case route was mapped; `/health/live` returned `200`
 and an unauthenticated Case list returned `401 AUTH_UNAUTHENTICATED`. Gitleaks
 found no secrets and the production dependency audit found no known
 vulnerabilities.
+
+## P1-004 implementation contract
+
+- Owner: Investigation module.
+- Canonical storage: PostgreSQL `investigations` and
+  `investigation_idempotency` tables.
+- Aggregate shape: each Investigation is a Case sub-unit/branch with one title,
+  objective, lifecycle status, and revision.
+- Create contract: the `caseId` comes from the path and `workspaceId` is derived
+  from the accessible parent Case; neither scope can be supplied in the body.
+- Read contract: nested lists filter on both Case and Workspace; detail reads
+  revalidate the parent through the public `CaseFacade` and reject mismatched
+  persisted scope with confidentiality-safe `404`.
+- Lifecycle: `ACTIVE` may pause, complete, or archive; `PAUSED` may resume,
+  complete, or archive; `COMPLETED` may reopen or archive; `ARCHIVED` is terminal.
+- Mutation contract: PATCH requires quoted `If-Match`; stale writes return `412`.
+- Event contract: `INVESTIGATION_CREATED` and `INVESTIGATION_UPDATED` v1 Outbox
+  events contain only scope references, revision, and changed-field names.
+- Authorization boundary: Case access remains delegated to `CaseFacade`; no
+  Case repository or persistence implementation is imported.
+
+## P1-004 foundation evidence
+
+- [x] Investigation uses UUIDv7 identity and positive revision.
+- [x] Create is idempotent and derives scope from the parent Case.
+- [x] Closed/archived Cases reject new Investigations.
+- [x] Case and Workspace cross-boundary reads are confidentiality-safe.
+- [x] Persisted `caseId`/`workspaceId` mismatch is rejected for both Workspaces.
+- [x] Fresh-database migration order preserves Workspace → Case → Investigation FKs.
+- [x] Lifecycle transitions and terminal archive state are enforced.
+- [x] Stale PATCH returns `412 CONFLICT_REVISION_MISMATCH`.
+- [x] Domain tests: 6 passed.
+- [x] PostgreSQL integration tests: 5 passed.
+- [x] Full local repository quality gate passes.
+- [ ] Real PR Quality Gate passes.
+
+Validation totals after the Investigation slice: 47 unit tests, 25
+PostgreSQL/HTTP integration tests, 3 contract tests, and 4 Playwright E2E tests
+passed. Runtime boot mapped all four Investigation routes and an unauthenticated
+detail request returned `401 AUTH_UNAUTHENTICATED`. Gitleaks found no secrets and
+the production dependency audit found no known vulnerabilities.

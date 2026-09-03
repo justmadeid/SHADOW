@@ -335,6 +335,107 @@ paths:
         "404": { $ref: "#/components/responses/CaseNotFound" }
         "409": { $ref: "#/components/responses/CaseTransitionConflict" }
         "412": { $ref: "#/components/responses/CaseRevisionMismatch" }
+  /cases/{caseId}/investigations:
+    parameters:
+      - $ref: "#/components/parameters/CaseId"
+    post:
+      operationId: createInvestigation
+      summary: Create an Investigation branch under an accessible Case
+      tags: [Investigation]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string, minLength: 8, maxLength: 200 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateInvestigationRequest" }
+      responses:
+        "201":
+          description: Investigation created, or equivalent idempotent result
+          headers:
+            Location:
+              schema: { type: string }
+            ETag:
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Investigation" }
+        "400": { $ref: "#/components/responses/InvestigationMutationInvalid" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/UserPrincipalRequired" }
+        "404": { $ref: "#/components/responses/CaseNotFound" }
+        "409":
+          description: Idempotency conflict or parent Case is not mutable
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+    get:
+      operationId: listInvestigations
+      summary: List Investigation branches under an accessible Case
+      tags: [Investigation]
+      responses:
+        "200":
+          description: Case-scoped Investigation list
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InvestigationList" }
+        "400": { $ref: "#/components/responses/InvestigationMutationInvalid" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/UserPrincipalRequired" }
+        "404": { $ref: "#/components/responses/CaseNotFound" }
+  /investigations/{investigationId}:
+    parameters:
+      - $ref: "#/components/parameters/InvestigationId"
+    get:
+      operationId: getInvestigation
+      summary: Read an accessible Investigation
+      tags: [Investigation]
+      responses:
+        "200":
+          description: Investigation detail
+          headers:
+            ETag:
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Investigation" }
+        "400": { $ref: "#/components/responses/InvestigationMutationInvalid" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/UserPrincipalRequired" }
+        "404": { $ref: "#/components/responses/InvestigationNotFound" }
+    patch:
+      operationId: updateInvestigation
+      summary: Update Investigation metadata or lifecycle status
+      tags: [Investigation]
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateInvestigationRequest" }
+      responses:
+        "200":
+          description: Updated Investigation
+          headers:
+            ETag:
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Investigation" }
+        "400": { $ref: "#/components/responses/InvestigationMutationInvalid" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/UserPrincipalRequired" }
+        "404": { $ref: "#/components/responses/InvestigationNotFound" }
+        "409":
+          description: Investigation lifecycle transition is not allowed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "412": { $ref: "#/components/responses/CaseRevisionMismatch" }
   /system/info:
     get:
       operationId: getSystemInfo
@@ -374,6 +475,11 @@ components:
         type: string
         pattern: '^"[0-9]+"$'
         example: '"1"'
+    InvestigationId:
+      name: investigationId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
   responses:
     CaseMutationSuccess:
       description: Mutated Case
@@ -410,6 +516,16 @@ components:
           schema: { $ref: "#/components/schemas/ErrorResponse" }
     CaseRevisionMismatch:
       description: If-Match revision is stale
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+    InvestigationMutationInvalid:
+      description: Invalid Investigation request, identifier, or If-Match header
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+    InvestigationNotFound:
+      description: Investigation absent or intentionally undisclosed
       content:
         application/json:
           schema: { $ref: "#/components/schemas/ErrorResponse" }
@@ -549,6 +665,60 @@ components:
           maxItems: 100
           items:
             $ref: "#/components/schemas/Case"
+    InvestigationStatus:
+      type: string
+      enum: [ACTIVE, PAUSED, COMPLETED, ARCHIVED]
+    CreateInvestigationRequest:
+      type: object
+      additionalProperties: false
+      required: [title, objective]
+      properties:
+        title: { type: string, minLength: 3, maxLength: 200 }
+        objective: { type: string, minLength: 3, maxLength: 2000 }
+    UpdateInvestigationRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        title: { type: string, minLength: 3, maxLength: 200 }
+        objective: { type: string, minLength: 3, maxLength: 2000 }
+        status: { $ref: "#/components/schemas/InvestigationStatus" }
+    Investigation:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - workspaceId
+        - caseId
+        - title
+        - objective
+        - status
+        - revision
+        - createdAt
+        - updatedAt
+        - completedAt
+        - archivedAt
+      properties:
+        id: { type: string, format: uuid }
+        workspaceId: { type: string, format: uuid }
+        caseId: { type: string, format: uuid }
+        title: { type: string }
+        objective: { type: string }
+        status: { $ref: "#/components/schemas/InvestigationStatus" }
+        revision: { type: integer, minimum: 1 }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        completedAt: { type: [string, "null"], format: date-time }
+        archivedAt: { type: [string, "null"], format: date-time }
+    InvestigationList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items: { $ref: "#/components/schemas/Investigation" }
     SystemInfo:
       type: object
       additionalProperties: false

@@ -28,7 +28,24 @@ function walk(dir, result = []) {
   return result;
 }
 
-const migrations = walk(path.join(root, "apps")).sort();
+// Cross-module foreign keys require a stable dependency order on a fresh database.
+// Paths within one owner remain lexically ordered so numbered migrations retain order.
+const ownerOrder = [
+  "/platform/events/outbox/",
+  "/modules/workspace/",
+  "/modules/case/",
+  "/modules/investigation/",
+];
+
+const migrations = walk(path.join(root, "apps")).sort((left, right) => {
+  const leftPath = left.split(path.sep).join("/");
+  const rightPath = right.split(path.sep).join("/");
+  const leftOwner = ownerOrder.findIndex((owner) => leftPath.includes(owner));
+  const rightOwner = ownerOrder.findIndex((owner) => rightPath.includes(owner));
+  const leftRank = leftOwner === -1 ? ownerOrder.length : leftOwner;
+  const rightRank = rightOwner === -1 ? ownerOrder.length : rightOwner;
+  return leftRank - rightRank || leftPath.localeCompare(rightPath);
+});
 const pool = new Pool({ connectionString: databaseUrl });
 
 try {
