@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { startPostgresTestContainer } from "@intelligence/testing";
 
-describe("database migration checksum", () => {
+describe("database migrations", () => {
   let started: Awaited<ReturnType<typeof startPostgresTestContainer>>;
   let fixtureRoot: string;
   let migrationPath: string;
@@ -39,6 +39,26 @@ describe("database migration checksum", () => {
     const changed = runMigration();
     expect(changed.status).not.toBe(0);
     expect(changed.stderr).toContain("Applied migration checksum changed");
+  });
+
+  it("applies repository migrations in dependency order", () => {
+    const migrated = spawnSync(
+      process.execPath,
+      [path.join(process.cwd(), "tooling/db/migrate.mjs")],
+      {
+        cwd: process.cwd(),
+        env: { ...process.env, DATABASE_URL: started.databaseUrl },
+        encoding: "utf8",
+      },
+    );
+
+    expect(migrated.status, migrated.stderr || migrated.stdout).toBe(0);
+    const workspace = migrated.stdout.indexOf("modules/workspace");
+    const caseDomain = migrated.stdout.indexOf("modules/case");
+    const investigation = migrated.stdout.indexOf("modules/investigation");
+    expect(workspace).toBeGreaterThanOrEqual(0);
+    expect(caseDomain).toBeGreaterThan(workspace);
+    expect(investigation).toBeGreaterThan(caseDomain);
   });
 
   function runMigration(): ReturnType<typeof spawnSync> {
