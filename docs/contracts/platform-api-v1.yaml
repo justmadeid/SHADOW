@@ -112,6 +112,229 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
+  /cases:
+    post:
+      operationId: createCase
+      summary: Create a draft Case in an accessible Workspace
+      tags: [Case]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 200
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateCaseRequest" }
+      responses:
+        "201":
+          description: Case created, or the equivalent idempotent result
+          headers:
+            Location:
+              schema: { type: string }
+            ETag:
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Case" }
+        "400":
+          description: Invalid request or idempotency key
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401":
+          description: Invalid authentication
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "403":
+          description: Operation requires a user principal
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "404":
+          description: Workspace absent or intentionally undisclosed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "409":
+          description: Idempotency or generated-code conflict
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+    get:
+      operationId: listCases
+      summary: List Cases in an accessible Workspace
+      tags: [Case]
+      parameters:
+        - name: workspaceId
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Workspace-scoped Case list
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CaseList" }
+        "400":
+          description: Invalid Workspace identifier
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401":
+          description: Invalid authentication
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "403":
+          description: Operation requires a user principal
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "404":
+          description: Workspace absent or intentionally undisclosed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+  /cases/{caseId}:
+    parameters:
+      - $ref: "#/components/parameters/CaseId"
+    get:
+      operationId: getCase
+      summary: Read an accessible Case
+      tags: [Case]
+      responses:
+        "200":
+          description: Case detail
+          headers:
+            ETag:
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Case" }
+        "400":
+          description: Invalid Case identifier
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401":
+          description: Invalid authentication
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "403":
+          description: Operation requires a user principal
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "404":
+          description: Case absent or intentionally undisclosed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+    patch:
+      operationId: updateCase
+      summary: Update mutable Case metadata
+      tags: [Case]
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateCaseRequest" }
+      responses:
+        "200":
+          description: Updated Case
+          headers:
+            ETag:
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Case" }
+        "400":
+          description: Invalid body, identifier, or If-Match header
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401":
+          description: Invalid authentication
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "403":
+          description: Operation requires a user principal
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "404":
+          description: Case absent or intentionally undisclosed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "409":
+          description: Case status does not permit metadata changes
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "412":
+          description: If-Match revision is stale
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+  /cases/{caseId}/actions/close:
+    post:
+      operationId: closeCase
+      summary: Close a draft or active Case
+      tags: [Case]
+      parameters:
+        - $ref: "#/components/parameters/CaseId"
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "200": { $ref: "#/components/responses/CaseMutationSuccess" }
+        "400": { $ref: "#/components/responses/CaseMutationInvalid" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/UserPrincipalRequired" }
+        "404": { $ref: "#/components/responses/CaseNotFound" }
+        "409": { $ref: "#/components/responses/CaseTransitionConflict" }
+        "412": { $ref: "#/components/responses/CaseRevisionMismatch" }
+  /cases/{caseId}/actions/reopen:
+    post:
+      operationId: reopenCase
+      summary: Reopen a closed Case as active
+      tags: [Case]
+      parameters:
+        - $ref: "#/components/parameters/CaseId"
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "200": { $ref: "#/components/responses/CaseMutationSuccess" }
+        "400": { $ref: "#/components/responses/CaseMutationInvalid" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/UserPrincipalRequired" }
+        "404": { $ref: "#/components/responses/CaseNotFound" }
+        "409": { $ref: "#/components/responses/CaseTransitionConflict" }
+        "412": { $ref: "#/components/responses/CaseRevisionMismatch" }
+  /cases/{caseId}/actions/archive:
+    post:
+      operationId: archiveCase
+      summary: Permanently move a non-archived Case to archived status
+      tags: [Case]
+      parameters:
+        - $ref: "#/components/parameters/CaseId"
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "200": { $ref: "#/components/responses/CaseMutationSuccess" }
+        "400": { $ref: "#/components/responses/CaseMutationInvalid" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/UserPrincipalRequired" }
+        "404": { $ref: "#/components/responses/CaseNotFound" }
+        "409": { $ref: "#/components/responses/CaseTransitionConflict" }
+        "412": { $ref: "#/components/responses/CaseRevisionMismatch" }
   /system/info:
     get:
       operationId: getSystemInfo
@@ -136,6 +359,60 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 components:
+  parameters:
+    CaseId:
+      name: caseId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    IfMatch:
+      name: If-Match
+      in: header
+      required: true
+      description: Quoted revision from the latest Case ETag.
+      schema:
+        type: string
+        pattern: '^"[0-9]+"$'
+        example: '"1"'
+  responses:
+    CaseMutationSuccess:
+      description: Mutated Case
+      headers:
+        ETag:
+          schema: { type: string }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Case" }
+    CaseMutationInvalid:
+      description: Invalid Case identifier or If-Match header
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+    Unauthenticated:
+      description: Invalid authentication
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+    UserPrincipalRequired:
+      description: Operation requires a user principal
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+    CaseNotFound:
+      description: Case absent or intentionally undisclosed
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+    CaseTransitionConflict:
+      description: Case status transition is not allowed
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+    CaseRevisionMismatch:
+      description: If-Match revision is stale
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
   securitySchemes:
     oidcAccessToken:
       type: http
@@ -194,6 +471,84 @@ components:
           maxItems: 100
           items:
             $ref: "#/components/schemas/Workspace"
+    DataClassification:
+      type: string
+      enum: [PUBLIC, INTERNAL, SENSITIVE, RESTRICTED]
+    CreateCaseRequest:
+      type: object
+      additionalProperties: false
+      required: [workspaceId, title, classification]
+      properties:
+        workspaceId: { type: string, format: uuid }
+        title:
+          type: string
+          minLength: 3
+          maxLength: 200
+        description:
+          type: [string, "null"]
+          maxLength: 4000
+        classification:
+          $ref: "#/components/schemas/DataClassification"
+    UpdateCaseRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        title:
+          type: string
+          minLength: 3
+          maxLength: 200
+        description:
+          type: [string, "null"]
+          maxLength: 4000
+        classification:
+          $ref: "#/components/schemas/DataClassification"
+    Case:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - code
+        - workspaceId
+        - title
+        - description
+        - status
+        - classification
+        - revision
+        - createdAt
+        - updatedAt
+        - closedAt
+        - archivedAt
+      properties:
+        id: { type: string, format: uuid }
+        code:
+          type: string
+          pattern: "^CASE-[0-9]{4}-[A-F0-9]{10}$"
+        workspaceId: { type: string, format: uuid }
+        title: { type: string }
+        description: { type: [string, "null"] }
+        status:
+          type: string
+          enum: [DRAFT, ACTIVE, CLOSED, ARCHIVED]
+        classification:
+          $ref: "#/components/schemas/DataClassification"
+        revision:
+          type: integer
+          minimum: 1
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        closedAt: { type: [string, "null"], format: date-time }
+        archivedAt: { type: [string, "null"], format: date-time }
+    CaseList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/Case"
     SystemInfo:
       type: object
       additionalProperties: false

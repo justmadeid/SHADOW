@@ -9,8 +9,8 @@ Milestone: **M1 — Protected Case Shell**
 | Task | Status | Evidence |
 | --- | --- | --- |
 | `P1-001` OIDC authentication integration | Complete; merged in PR #4 | OIDC JWT/JWKS verifier, global API guard, user/service principal propagation, public health boundary, stable 401 contract, runtime smoke, and automated negative-path coverage passed the real PR Quality Gate |
-| `P1-002` Workspace domain | Complete locally; PR pending | UUIDv7 Workspace aggregate, settings, initial membership/history, idempotent persistence, member-scoped reads, Outbox events, migration, and initial API contract implemented on `feat/p1-002-workspace-domain` |
-| `P1-003` Case domain | Not started | Depends on P1-002 |
+| `P1-002` Workspace domain | Complete; merged in PR #5 | UUIDv7 Workspace aggregate, settings, initial membership/history, idempotent persistence, member-scoped reads, Outbox events, migration, and API contract passed the real PR Quality Gate |
+| `P1-003` Case domain | Complete locally; PR pending | UUIDv7 Case aggregate, opaque human-readable code, classification, lifecycle, optimistic concurrency, Outbox events, migration, and API contract implemented on `feat/p1-003-case-domain` |
 | `P1-004` Investigation domain | Not started | Depends on P1-003 |
 | `P1-005` Governance permission model | Not started | Depends on P1-001 and P1-002 |
 | `P1-006` Case membership policy | Not started | Depends on P1-003 and P1-005 |
@@ -90,9 +90,53 @@ Milestone: **M1 — Protected Case Shell**
 - [x] Domain tests: 5 passed.
 - [x] PostgreSQL integration tests: 4 passed.
 - [x] Full local repository quality gate passes.
-- [ ] Real PR Quality Gate passes.
+- [x] Real PR Quality Gate passes.
 
 Validation totals after the Workspace slice: 34 unit tests, 14 PostgreSQL/HTTP
 integration tests, 3 contract tests, and 4 Playwright E2E tests passed. The API
 boot smoke confirmed `WorkspaceModule` wiring and returned
 `401 AUTH_UNAUTHENTICATED` for an unauthenticated workspace list request.
+
+## P1-003 implementation contract
+
+- Owner: Case module.
+- Canonical storage: PostgreSQL `cases` and `case_idempotency` tables.
+- Create contract: authenticated Workspace member plus `Idempotency-Key`;
+  Case starts in `DRAFT` with a UUIDv7 identity and non-sequential opaque code.
+- Read contract: list is explicitly Workspace-scoped; detail access verifies
+  Workspace membership and returns confidentiality-safe `CASE_NOT_FOUND` when
+  the containing Workspace is inaccessible.
+- Mutation contract: metadata updates and lifecycle commands require a quoted
+  `If-Match` revision; stale writes return `412`.
+- Lifecycle: `DRAFT|ACTIVE -> CLOSED`, `CLOSED -> ACTIVE`, and any non-archived
+  status may transition to terminal `ARCHIVED`.
+- Event contract: `CASE_CREATED`, `CASE_UPDATED`, and `CASE_STATUS_CHANGED` v1
+  Outbox events carry resource references, revisions, and changed-field/status
+  metadata without titles, descriptions, user identity, or token data.
+- Authorization boundary: P1-003 verifies active Workspace membership through
+  the Workspace public facade. Case roles and Case-scoped membership policy are
+  intentionally deferred to P1-005/P1-006.
+- Classification boundary: P1-003 stores the locked classification enum without
+  yet implementing P1-007 visibility/export/source policy hooks.
+
+## P1-003 foundation evidence
+
+- [x] Case uses UUIDv7 identity, opaque human-readable code, and positive revision.
+- [x] Case creation is idempotent and commits its Outbox event atomically.
+- [x] Case list/detail require access to the containing Workspace.
+- [x] Metadata update rejects closed/archived Case state.
+- [x] Close, reopen, and archive transitions enforce domain invariants.
+- [x] Every Case mutation uses optimistic concurrency and increments revision.
+- [x] Stale mutation returns `412 CONFLICT_REVISION_MISMATCH`.
+- [x] Outbox payloads exclude Case content and authenticated identity.
+- [x] Domain tests: 7 passed.
+- [x] PostgreSQL integration tests: 5 passed.
+- [x] Full local repository quality gate passes.
+- [ ] Real PR Quality Gate passes.
+
+Validation totals after the Case slice: 41 unit tests, 19 PostgreSQL/HTTP
+integration tests, 3 contract tests, and 4 Playwright E2E tests passed. The API
+boot smoke confirmed every Case route was mapped; `/health/live` returned `200`
+and an unauthenticated Case list returned `401 AUTH_UNAUTHENTICATED`. Gitleaks
+found no secrets and the production dependency audit found no known
+vulnerabilities.
