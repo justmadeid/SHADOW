@@ -8,8 +8,8 @@ Milestone: **M1 — Protected Case Shell**
 
 | Task | Status | Evidence |
 | --- | --- | --- |
-| `P1-001` OIDC authentication integration | Complete locally; PR pending | OIDC JWT/JWKS verifier, global API guard, user/service principal propagation, public health boundary, stable 401 contract, runtime smoke, and automated negative-path coverage pass on `feat/p1-001-oidc-authentication` |
-| `P1-002` Workspace domain | Not started | Depends on P1-001 |
+| `P1-001` OIDC authentication integration | Complete; merged in PR #4 | OIDC JWT/JWKS verifier, global API guard, user/service principal propagation, public health boundary, stable 401 contract, runtime smoke, and automated negative-path coverage passed the real PR Quality Gate |
+| `P1-002` Workspace domain | Complete locally; PR pending | UUIDv7 Workspace aggregate, settings, initial membership/history, idempotent persistence, member-scoped reads, Outbox events, migration, and initial API contract implemented on `feat/p1-002-workspace-domain` |
 | `P1-003` Case domain | Not started | Depends on P1-002 |
 | `P1-004` Investigation domain | Not started | Depends on P1-003 |
 | `P1-005` Governance permission model | Not started | Depends on P1-001 and P1-002 |
@@ -60,3 +60,39 @@ Milestone: **M1 — Protected Case Shell**
   no known vulnerabilities.
 - Toolchain: pnpm `10.15.0` completed a frozen-lockfile installation for all 16
   workspace projects.
+
+## P1-002 implementation contract
+
+- Owner: Workspace module.
+- Canonical storage: PostgreSQL `workspaces`, `workspace_settings`,
+  `workspace_members`, and append-only `workspace_membership_history` tables.
+- Create contract: authenticated user plus `Idempotency-Key`; creation adds the
+  creator as an active member in the same transaction.
+- Read contract: list and detail queries are filtered by active user membership;
+  inaccessible workspace IDs return confidentiality-safe `404`.
+- Event contract: `WORKSPACE_CREATED` and `WORKSPACE_MEMBERSHIP_CHANGED` v1
+  Outbox events carry references and revisions, not user identity or token data.
+- Authorization boundary: the module enforces user membership scoping but does
+  not invent roles or permissions before P1-005 Governance.
+- Deferred surface: workspace update and member-management HTTP commands wait
+  for PolicyEnforcer so no temporary over-permissive API is introduced.
+
+## P1-002 foundation evidence
+
+- [x] Workspace and membership use UUIDv7 IDs and positive revisions.
+- [x] Workspace settings are modeled separately from membership.
+- [x] Initial membership history is append-only and committed atomically.
+- [x] Workspace creation and two Outbox events share one transaction.
+- [x] Identical idempotency replay returns the same workspace.
+- [x] Conflicting idempotency replay returns `409`.
+- [x] Cross-user read returns a confidentiality-safe `404`.
+- [x] Service principal cannot masquerade as a workspace member.
+- [x] Domain tests: 5 passed.
+- [x] PostgreSQL integration tests: 4 passed.
+- [x] Full local repository quality gate passes.
+- [ ] Real PR Quality Gate passes.
+
+Validation totals after the Workspace slice: 34 unit tests, 14 PostgreSQL/HTTP
+integration tests, 3 contract tests, and 4 Playwright E2E tests passed. The API
+boot smoke confirmed `WorkspaceModule` wiring and returned
+`401 AUTH_UNAUTHENTICATED` for an unauthenticated workspace list request.
