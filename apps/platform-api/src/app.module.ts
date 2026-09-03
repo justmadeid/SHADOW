@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { APP_FILTER } from "@nestjs/core";
 import type { Logger } from "pino";
+import { CaseModule } from "./modules/case/index.js";
 import { WorkspaceModule } from "./modules/workspace/index.js";
 import { AuthenticationModule } from "./platform/auth/index.js";
 import { DatabaseModule } from "./platform/database/database.module.js";
@@ -24,6 +25,7 @@ import { SystemController } from "./presentation/shared/system.controller.js";
     DatabaseModule,
     HealthModule,
     WorkspaceModule,
+    CaseModule,
   ],
   controllers: [SystemController],
   providers: [
