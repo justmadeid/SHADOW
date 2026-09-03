@@ -4,67 +4,67 @@ Run these gates on a developer/CI environment with Docker + network/package cach
 
 ## Bootstrap
 
-- [ ] `corepack enable`
-- [ ] `pnpm install --frozen-lockfile` after initial lockfile is generated and committed.
-- [ ] `.env` and infrastructure dev env created from examples.
+- [x] `corepack enable`
+- [x] `pnpm install --frozen-lockfile` after initial lockfile is generated and committed.
+- [x] `.env` and infrastructure dev env created from examples.
 
 ## Local infrastructure
 
-- [ ] `pnpm dev:infra`
-- [ ] `pnpm dev:infra:check`
-- [ ] PostgreSQL healthy.
-- [ ] Redis healthy.
-- [ ] MinIO healthy and private dev bucket exists.
-- [ ] **Investigation** Elasticsearch healthy.
-- [ ] OTel Collector healthy.
-- [ ] Jaeger reachable.
-- [ ] No Resident Elasticsearch exists in platform compose.
+- [x] `pnpm dev:infra`
+- [x] `pnpm dev:infra:check`
+- [x] PostgreSQL healthy.
+- [x] Redis healthy.
+- [x] MinIO healthy and private dev bucket exists.
+- [x] **Investigation** Elasticsearch healthy.
+- [x] OTel Collector healthy.
+- [x] Jaeger reachable.
+- [x] No Resident Elasticsearch exists in platform compose.
 
 ## Database
 
-- [ ] `pnpm migrations:validate`
-- [ ] `pnpm db:migrate`
-- [ ] migration rerun is no-op.
-- [ ] changing an applied migration checksum is rejected.
+- [x] `pnpm migrations:validate`
+- [x] `pnpm db:migrate`
+- [x] migration rerun is no-op.
+- [x] changing an applied migration checksum is rejected.
 
 ## Applications
 
-- [ ] `platform-api` boots.
-- [ ] `/health/live` returns 200.
-- [ ] `/health/ready` returns 200 when PostgreSQL is healthy.
-- [ ] `/api/v1/system/info` returns requestId + traceId.
-- [ ] `platform-web` boots and SHADOW/ECHO/SPECTRA routes render.
-- [ ] worker processes boot and shut down cleanly.
+- [x] `platform-api` boots.
+- [x] `/health/live` returns 200.
+- [x] `/health/ready` returns 200 when PostgreSQL is healthy.
+- [x] `/api/v1/system/info` returns requestId + traceId.
+- [x] `platform-web` boots and SHADOW/ECHO/SPECTRA routes render.
+- [x] worker processes boot and shut down cleanly.
 
 ## Observability
 
-- [ ] API request appears in trace backend.
-- [ ] requestId is present in structured log.
-- [ ] PII redaction smoke passes.
-- [ ] restricted identifier values do not appear in log/trace.
+- [x] API request appears in trace backend.
+- [x] requestId is present in structured log.
+- [x] PII redaction smoke passes.
+- [x] restricted identifier values do not appear in log/trace.
 
 ## Architecture
 
-- [ ] `pnpm check:architecture` passes.
-- [ ] intentional SHADOW → ECHO internal import fixture fails.
-- [ ] intentional module A → module B infrastructure import fixture fails.
+- [x] `pnpm check:architecture` passes.
+- [x] intentional SHADOW → ECHO internal import fixture fails.
+- [x] intentional module A → module B infrastructure import fixture fails.
 
 ## Tests
 
-- [ ] unit tests pass.
-- [ ] contract tests pass.
-- [ ] PostgreSQL Testcontainers integration passes.
-- [ ] Outbox rollback/lease integration passes.
-- [ ] Playwright foundation smoke passes.
+- [x] unit tests pass.
+- [x] contract tests pass.
+- [x] PostgreSQL Testcontainers integration passes.
+- [x] Outbox rollback/lease integration passes.
+- [x] Playwright foundation smoke passes.
 
 ## Contracts/security/build
 
-- [ ] Redocly lint passes.
-- [ ] Gitleaks passes.
-- [ ] production dependency audit reviewed.
-- [ ] `pnpm build` passes for all deployables/packages.
-- [ ] GitHub `Quality Gate` passes on a real PR.
-- [ ] third-party actions are pinned to reviewed commit SHAs before branch protection.
+- [x] Redocly lint passes.
+- [x] Gitleaks passes.
+- [x] production dependency audit reviewed.
+- [x] `pnpm build` passes for all deployables/packages.
+- [x] GitHub `Quality Gate` passes on a real PR.
+- [x] third-party actions are pinned to reviewed commit SHAs before branch protection.
 
 ## Exit rule
 
