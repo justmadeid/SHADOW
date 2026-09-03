@@ -8,4 +8,74 @@ info:
     identifier: LicenseRef-Proprietary
 servers:
   - url: /api/v1
-paths: {}
+security:
+  - oidcAccessToken: []
+paths:
+  /system/info:
+    get:
+      operationId: getSystemInfo
+      summary: Read authenticated platform runtime information
+      tags: [System]
+      responses:
+        "200":
+          description: Platform runtime information
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SystemInfo"
+        "401":
+          description: Missing, malformed, expired, or otherwise invalid access token
+          headers:
+            WWW-Authenticate:
+              schema:
+                type: string
+              description: Bearer authentication challenge
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+components:
+  securitySchemes:
+    oidcAccessToken:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: OIDC access token validated against the configured issuer JWKS.
+  schemas:
+    SystemInfo:
+      type: object
+      additionalProperties: false
+      required: [service, status, requestId, traceId, version]
+      properties:
+        service:
+          type: string
+          const: platform-api
+        status:
+          type: string
+          const: ok
+        requestId:
+          type: string
+        traceId:
+          type: string
+        version:
+          type: string
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message, requestId]
+          properties:
+            code:
+              type: string
+              example: AUTH_UNAUTHENTICATED
+            message:
+              type: string
+            requestId:
+              type: string
+            details:
+              type: object
+              additionalProperties: true

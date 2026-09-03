@@ -22,6 +22,7 @@ function clientApplication(value: string | undefined): ClientApplication {
 @Injectable()
 export class RequestContextMiddleware implements NestMiddleware {
   constructor(
+    @Inject(RequestContextStore)
     private readonly store: RequestContextStore,
     @Inject(PLATFORM_LOGGER) private readonly logger: Logger,
   ) {}

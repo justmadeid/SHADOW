@@ -3,11 +3,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const checker = path.join(here, "check-boundaries.mjs");
+const require = createRequire(import.meta.url);
 
 function write(root, rel, content) {
   const file = path.join(root, rel);
@@ -111,4 +113,13 @@ test("P0-003 allows a backend module to import its own internals", () => {
 
   const result = run(root);
   assert.equal(result.status, 0, result.stderr || result.stdout);
+});
+
+test("dependency graph excludes generated build artifacts", () => {
+  const configuration = require(path.join(here, "../..", ".dependency-cruiser.cjs"));
+  const excluded = new RegExp(configuration.options.exclude);
+
+  assert.equal(excluded.test("apps/platform-web/.next/server/chunks/app.js"), true);
+  assert.equal(excluded.test("apps/platform-api/dist/main.js"), true);
+  assert.equal(excluded.test("apps/platform-api/src/main.ts"), false);
 });
