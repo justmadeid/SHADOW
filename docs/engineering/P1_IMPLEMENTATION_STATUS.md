@@ -11,7 +11,7 @@ Milestone: **M1 — Protected Case Shell**
 | `P1-001` OIDC authentication integration | Complete; merged in PR #4 | OIDC JWT/JWKS verifier, global API guard, user/service principal propagation, public health boundary, stable 401 contract, runtime smoke, and automated negative-path coverage passed the real PR Quality Gate |
 | `P1-002` Workspace domain | Complete; merged in PR #5 | UUIDv7 Workspace aggregate, settings, initial membership/history, idempotent persistence, member-scoped reads, Outbox events, migration, and API contract passed the real PR Quality Gate |
 | `P1-003` Case domain | Complete; merged in PR #6 | UUIDv7 Case aggregate, opaque human-readable code, classification, lifecycle, optimistic concurrency, Outbox events, migration, and API contract passed the real PR and post-merge Quality Gates |
-| `P1-004` Investigation domain | Complete locally; PR pending | Case-scoped Investigation branch/objective, lifecycle, idempotency, optimistic concurrency, Outbox events, migration, and API contract implemented on `feat/p1-004-investigation-domain` |
+| `P1-004` Investigation domain | Complete; merged in PR #8 | Case-scoped Investigation branch/objective, lifecycle, idempotency, optimistic concurrency, Outbox events, migration, and API contract passed the real PR Quality Gate |
 | `P1-005` Governance permission model | Not started | Depends on P1-001 and P1-002 |
 | `P1-006` Case membership policy | Not started | Depends on P1-003 and P1-005 |
 | `P1-007` Data classification primitive | Not started | Depends on P1-005 |
@@ -174,7 +174,7 @@ vulnerabilities.
 - [x] Domain tests: 6 passed.
 - [x] PostgreSQL integration tests: 5 passed.
 - [x] Full local repository quality gate passes.
-- [ ] Real PR Quality Gate passes.
+- [x] Real PR Quality Gate passes.
 
 Validation totals after the Investigation slice: 47 unit tests, 25
 PostgreSQL/HTTP integration tests, 3 contract tests, and 4 Playwright E2E tests
