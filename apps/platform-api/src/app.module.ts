@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { APP_FILTER } from "@nestjs/core";
 import type { Logger } from "pino";
+import { WorkspaceModule } from "./modules/workspace/index.js";
 import { AuthenticationModule } from "./platform/auth/index.js";
 import { DatabaseModule } from "./platform/database/database.module.js";
 import { PlatformExceptionFilter } from "./platform/errors/http-exception.filter.js";
@@ -22,6 +23,7 @@ import { SystemController } from "./presentation/shared/system.controller.js";
     LoggingModule,
     DatabaseModule,
     HealthModule,
+    WorkspaceModule,
   ],
   controllers: [SystemController],
   providers: [

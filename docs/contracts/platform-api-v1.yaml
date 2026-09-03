@@ -11,6 +11,107 @@ servers:
 security:
   - oidcAccessToken: []
 paths:
+  /workspaces:
+    post:
+      operationId: createWorkspace
+      summary: Create a workspace and initial membership
+      tags: [Workspace]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 200
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateWorkspaceRequest"
+      responses:
+        "201":
+          description: Workspace created, or the equivalent idempotent result
+          headers:
+            Location:
+              schema: { type: string }
+            ETag:
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Workspace"
+        "400":
+          description: Invalid request or idempotency key
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401":
+          description: Invalid authentication
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "403":
+          description: A service principal cannot create a user workspace
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "409":
+          description: Slug or idempotency conflict
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+    get:
+      operationId: listWorkspaces
+      summary: List active workspaces for the authenticated user
+      tags: [Workspace]
+      responses:
+        "200":
+          description: Membership-scoped workspace list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkspaceList"
+        "401":
+          description: Invalid authentication
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+  /workspaces/{workspaceId}:
+    get:
+      operationId: getWorkspace
+      summary: Read a workspace visible through active membership
+      tags: [Workspace]
+      parameters:
+        - name: workspaceId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Workspace detail
+          headers:
+            ETag:
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Workspace" }
+        "400":
+          description: Invalid workspace identifier
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401":
+          description: Invalid authentication
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "404":
+          description: Workspace absent or intentionally undisclosed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
   /system/info:
     get:
       operationId: getSystemInfo
@@ -42,6 +143,57 @@ components:
       bearerFormat: JWT
       description: OIDC access token validated against the configured issuer JWKS.
   schemas:
+    CreateWorkspaceRequest:
+      type: object
+      additionalProperties: false
+      required: [name, slug, locale, timeZone]
+      properties:
+        name:
+          type: string
+          minLength: 2
+          maxLength: 160
+        slug:
+          type: string
+          pattern: "^[a-z0-9](?:[a-z0-9-]{1,61}[a-z0-9])$"
+        locale:
+          type: string
+        timeZone:
+          type: string
+    WorkspaceSettings:
+      type: object
+      additionalProperties: false
+      required: [locale, timeZone]
+      properties:
+        locale: { type: string }
+        timeZone: { type: string }
+    Workspace:
+      type: object
+      additionalProperties: false
+      required: [id, name, slug, status, settings, revision, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        slug: { type: string }
+        status:
+          type: string
+          enum: [ACTIVE, ARCHIVED]
+        settings:
+          $ref: "#/components/schemas/WorkspaceSettings"
+        revision:
+          type: integer
+          minimum: 1
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    WorkspaceList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/Workspace"
     SystemInfo:
       type: object
       additionalProperties: false
