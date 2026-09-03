@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import type { AuthenticatedPrincipal } from "@intelligence/auth";
 import { Injectable } from "@nestjs/common";
 import type { RequestContext } from "./request-context.js";
 
@@ -20,5 +21,19 @@ export class RequestContextStore {
 
   getOptional(): RequestContext | undefined {
     return this.storage.getStore();
+  }
+
+  setPrincipal(principal: AuthenticatedPrincipal): void {
+    const context = this.get();
+    context.principal = principal;
+
+    delete context.userId;
+    delete context.serviceId;
+
+    if (principal.kind === "USER") {
+      context.userId = principal.userId;
+    } else {
+      context.serviceId = principal.serviceId;
+    }
   }
 }

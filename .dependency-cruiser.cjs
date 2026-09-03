@@ -53,6 +53,8 @@ module.exports = {
   ],
   options: {
     combinedDependencies: true,
+    exclude:
+      "(^|/)(\\.next|\\.turbo|coverage|dist|node_modules|playwright-report|test-results)(/|$)",
     doNotFollow: {
       path: "node_modules",
     },
