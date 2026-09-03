@@ -4,7 +4,7 @@ Date: 2026-09-03
 
 Workspace: `intelligence-platform-docs`
 
-Status: **M0 — ENGINEERING READY**
+Status: **M0 — Engineering Ready**
 
 ## Decision
 
