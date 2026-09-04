@@ -66,6 +66,15 @@ export class CaseController {
     return serializeCase(found);
   }
 
+  @Get(":caseId/access")
+  async access(
+    @Param("caseId") caseId: string,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    response.setHeader("cache-control", "private, no-store");
+    return this.cases.access(parseResourceId(caseId, "Case"));
+  }
+
   @Patch(":caseId")
   async update(
     @Param("caseId") caseId: string,

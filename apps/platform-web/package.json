@@ -9,6 +9,12 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@intelligence/api-client": "workspace:*",
+    "@intelligence/contracts": "workspace:*",
+    "@tanstack/react-query": "5.102.8",
+    "jose": "6.2.10",
+    "openid-client": "6.8.7",
+    "server-only": "0.0.1",
     "next": "^15.5.2",
     "react": "^19.1.1",
     "react-dom": "^19.1.1"

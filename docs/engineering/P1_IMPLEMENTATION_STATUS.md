@@ -16,7 +16,7 @@ Milestone: **M1 — Protected Case Shell**
 | `P1-006` Case membership policy | Implemented locally; user owns Git/PR; current dependency audit passed in P1-008 | Explicit Case OWNER/EDITOR/VIEWER, protected Case/Investigation routes, membership-filtered pagination, transactional grant/revoke history and Outbox, legacy creator migration, and IDOR/concurrency coverage; see validation below |
 | `P1-007` Data classification primitive | Implemented locally; user owns Git/PR; current dependency audit passed in P1-008 | Shared classification vocabulary, versioned handling metadata, server display/export/source policy hooks, safe field presenter, no automatic derived downgrade, Case HTTP handling metadata, and negative-path tests; see validation below |
 | `P1-008` Critical audit baseline | Implemented and validated locally; user owns commit/PR | Separate append-only Audit, atomic membership/history/Outbox, rollback-only failures, and audited sensitive-access authorization; see ADR-003 and validation below |
-| `P1-009` Platform shell auth/workspace/case context | Not started | Depends on backend Workspace, Case, and membership foundations |
+| `P1-009` Platform shell auth/workspace/case context | Implemented and validated locally; Auth0 live smoke pending; user owns Git/PR | Server-side OIDC session, guarded shared shell, canonical Workspace/Case navigation, scoped TanStack Query state, and backend-derived capabilities; see ADR-004 and validation below |
 | `P1-010` Case CRUD UI in SHADOW | Not started | Depends on P1-004 and P1-009 |
 
 ## P1-001 implementation contract
@@ -391,3 +391,63 @@ independently run the production dependency audit.
 - No commit, pull, push, PR, user-database migration or deployment was performed.
   Apply the additive Audit migration before starting the new API build; preserve
   Audit data on rollback. User owns the Git workflow and remote Quality Gate.
+
+## P1-009 implementation contract
+
+- Owner: shared platform web shell. Canonical identity comes from OIDC and API
+  authentication; Workspace/Case data and Governance capabilities remain in the
+  Platform API. Dependencies: P1-002, P1-003 and P1-006.
+- Auth0 is the selected provider. Authorization Code + PKCE runs server-side with
+  state/nonce and ID-token signature validation, configured API audience, and
+  confidential-client authentication. No provider tenant/settings were changed.
+- Tokens stay inside an encrypted HttpOnly session cookie, never browser-accessible
+  storage or API JSON. Session duration is capped at 15 minutes and token expiry.
+  POST-only exact-Origin logout clears cookies and other tabs clear their UI/cache.
+- Authenticated users navigate SHADOW/ECHO/SPECTRA with the same UUID Workspace/Case
+  context. Workspace switching clears Case; deep links are reauthorized and reject
+  mismatched contexts. Product-local state does not cross the navigation contract.
+- TanStack Query owns bounded, non-persistent server state. Loading, empty, denied,
+  expired and unavailable states are explicit. Capabilities are backend decisions,
+  never permission grants invented in the browser.
+- Additive API contracts: `GET /api/v1/session` and
+  `GET /api/v1/cases/{caseId}/access`. Browser BFF routes allow only specific reads
+  and return validated minimal summaries. No new domain mutation/event, raw-field
+  disclosure, critical Audit action, source call, database schema or migration.
+- Contracts and operational decisions:
+  [web shell v1 and Auth0 setup](../contracts/platform-web-shell-v1.md),
+  [Platform API OpenAPI](../contracts/platform-api-v1.yaml),
+  [ADR-004](ADR-004_PROTECTED_PLATFORM_SHELL.md).
+
+## P1-009 validation evidence (2026-09-04)
+
+- Unit: **152 passed**; includes redirect/context validation, read-only proxy
+  allowlists, cookie integrity/purpose/expiry/size, endpoint configuration, and
+  strict API response parsing without reflecting upstream secrets/errors.
+- PostgreSQL/HTTP integration: **57 passed**, including user-only session identity
+  and Case capability isolation for owner/viewer/outsider and revoked membership.
+- Contract: **6 passed**; expanded OpenAPI lint passed.
+- Playwright: **20 passed with retries disabled**. Separate loopback synthetic
+  issuer/API exercises PKCE, confidential client secret, audience, signed ID token,
+  callback state rejection, login/refresh, cross-product context, Workspace switch,
+  viewer capabilities, revocation, background expiry, same-tab/cross-tab logout,
+  BFF write/CSRF rejection, empty/error states and literal untrusted label rendering.
+- Desktop and 390px mobile screenshots were visually inspected; mobile overflow
+  assertion passed. No synthetic data/auth bypass is imported into the app.
+- Full `m0:static` passed: architecture (136 source files), 6 boundary tests,
+  dependency graph, formatting, lint, typecheck, 7-migration validation and all
+  package builds. Shared product routes are dynamic and about 120 kB first-load JS.
+- pnpm 10.15.0 frozen-lockfile installation passed for all 16 workspace projects.
+  Added React Query/query-core, openid-client/oauth4webapi and server-only; reused
+  the existing jose version. Existing package versions were not upgraded; pnpm also
+  normalized optional `supports-color` peer-resolution suffixes in the lockfile.
+- Security: production dependency audit reports **no known vulnerabilities**;
+  Gitleaks reports **no leaks**; `git diff --check` passed.
+- Live Auth0 login is **not yet verified**: supply tenant issuer, web Client ID,
+  API Identifier, server-only client secret/session key and matching API config;
+  register the exact callback and perform the documented smoke test. The synthetic
+  test provider is not evidence of tenant connectivity or real role provisioning.
+- Intentional baseline limits: no refresh tokens, provider-wide logout or centrally
+  revocable session store; oversized encrypted cookies fail closed. Local sign-out
+  does not invalidate a copied cookie before its expiry/backend token rejection.
+- No commit, pull, push, PR, user-database migration or deployment was performed.
+  Deploy the additive API reads before web. Case CRUD UI remains **P1-010**.
