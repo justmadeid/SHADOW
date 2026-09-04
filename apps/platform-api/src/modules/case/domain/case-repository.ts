@@ -28,7 +28,11 @@ export type TransitionCaseCommand = {
 
 export interface CaseRepository {
   create(command: CreateCaseCommand): Promise<CreateCaseResult>;
-  listByWorkspace(workspaceId: string, limit: number): Promise<Case[]>;
+  listByWorkspace(
+    workspaceId: string,
+    limit: number,
+    authorizedCaseIds: string[],
+  ): Promise<Case[]>;
   findById(caseId: string): Promise<Case | undefined>;
   update(command: UpdateCaseCommand): Promise<Case>;
   transition(command: TransitionCaseCommand): Promise<Case>;

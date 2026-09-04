@@ -2,7 +2,15 @@ openapi: 3.1.0
 info:
   title: Investigation Intelligence Platform API
   version: 1.0.0
-  description: Public Platform API contract expanded incrementally by implementation slice.
+  description: >-
+    Public Platform API contract expanded incrementally by implementation slice.
+    Case and Investigation operations require active Workspace membership plus
+    explicit membership of the containing Case. OWNER can read, edit, and manage
+    Case membership; EDITOR can read and edit; VIEWER can read only. Membership
+    administration currently has no public HTTP surface. Denied resource access
+    returns the same 404 contract as a missing resource; broad Workspace or
+    entity-discovery grants do not bypass Case membership. Classification-specific
+    restrictions are a separate P1-007 layer and are not implied by these roles.
   license:
     name: Proprietary
     identifier: LicenseRef-Proprietary
@@ -116,6 +124,9 @@ paths:
     post:
       operationId: createCase
       summary: Create a draft Case in an accessible Workspace
+      description: >-
+        Atomically creates the Case and grants its creator OWNER membership.
+        Idempotency replay rechecks access and never restores revoked membership.
       tags: [Case]
       parameters:
         - name: Idempotency-Key
@@ -168,21 +179,30 @@ paths:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
     get:
       operationId: listCases
-      summary: List Cases in an accessible Workspace
+      summary: List only Cases accessible to the current user in a Workspace
+      description: >-
+        Filters by active Case membership before pagination. Returns at most 100
+        items ordered by descending Case ID. Cursor is opaque and bound to the
+        requested Workspace; each page evaluates the current user's permissions.
       tags: [Case]
       parameters:
         - name: workspaceId
           in: query
           required: true
           schema: { type: string, format: uuid }
+        - name: cursor
+          in: query
+          required: false
+          description: Opaque nextCursor from the preceding Case page
+          schema: { type: string }
       responses:
         "200":
-          description: Workspace-scoped Case list
+          description: Authorized Case page with hasMore and nextCursor
           content:
             application/json:
               schema: { $ref: "#/components/schemas/CaseList" }
         "400":
-          description: Invalid Workspace identifier
+          description: Invalid Workspace identifier or Case cursor
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
@@ -658,8 +678,15 @@ components:
     CaseList:
       type: object
       additionalProperties: false
-      required: [items]
+      required: [items, page]
       properties:
+        page:
+          type: object
+          additionalProperties: false
+          required: [hasMore, nextCursor]
+          properties:
+            hasMore: { type: boolean }
+            nextCursor: { type: [string, "null"] }
         items:
           type: array
           maxItems: 100

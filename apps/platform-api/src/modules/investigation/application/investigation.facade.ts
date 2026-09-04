@@ -36,29 +36,30 @@ export class InvestigationFacade {
     idempotencyKey: string,
   ): Promise<Investigation> {
     const actorUserId = this.requireUserId();
-    const parent = await this.cases.get(caseId);
-    this.assertParentMutable(parent);
-    const normalized = validateCreateInvestigationInput(input);
-    const requestHash = createHash("sha256")
-      .update(JSON.stringify({ caseId, ...normalized }))
-      .digest("hex");
+    return this.cases.withAccess(caseId, "INVESTIGATION_CREATE", async (parent) => {
+      this.assertParentMutable(parent);
+      const normalized = validateCreateInvestigationInput(input);
+      const requestHash = createHash("sha256")
+        .update(JSON.stringify({ caseId, ...normalized }))
+        .digest("hex");
 
-    const result = await this.transactions.run(() =>
-      this.repository.create({
-        ...normalized,
-        workspaceId: parent.workspaceId,
-        caseId,
-        actorUserId,
-        idempotencyKey,
-        requestHash,
-      }),
-    );
-    return result.investigation;
+      const result = await this.transactions.run(() =>
+        this.repository.create({
+          ...normalized,
+          workspaceId: parent.workspaceId,
+          caseId,
+          actorUserId,
+          idempotencyKey,
+          requestHash,
+        }),
+      );
+      return result.investigation;
+    });
   }
 
   async list(caseId: string): Promise<Investigation[]> {
     this.requireUserId();
-    const parent = await this.cases.get(caseId);
+    const parent = await this.cases.get(caseId, "INVESTIGATION_VIEW");
     return this.repository.listByCase(parent.workspaceId, caseId, 100);
   }
 
@@ -68,7 +69,7 @@ export class InvestigationFacade {
     if (!found) return this.notFound();
 
     try {
-      const parent = await this.cases.get(found.caseId);
+      const parent = await this.cases.get(found.caseId, "INVESTIGATION_VIEW");
       if (parent.workspaceId !== found.workspaceId) return this.notFound();
     } catch (error) {
       if (error instanceof AppError && error.statusCode === 404) return this.notFound();
@@ -83,20 +84,23 @@ export class InvestigationFacade {
     expectedRevision: number,
   ): Promise<Investigation> {
     this.requireUserId();
-    const current = await this.get(investigationId);
-    assertExpectedRevision(expectedRevision, current.revision);
-    const changes = validateUpdateInvestigationInput(input);
-    assertInvestigationUpdateAllowed(current.status, changes.status);
+    const found = await this.get(investigationId);
+    return this.cases.withAccess(found.caseId, "INVESTIGATION_UPDATE", async () => {
+      const current = await this.get(investigationId);
+      assertExpectedRevision(expectedRevision, current.revision);
+      const changes = validateUpdateInvestigationInput(input);
+      assertInvestigationUpdateAllowed(current.status, changes.status);
 
-    return this.transactions.run(() =>
-      this.repository.update({
-        investigationId,
-        workspaceId: current.workspaceId,
-        caseId: current.caseId,
-        expectedRevision,
-        changes,
-      }),
-    );
+      return this.transactions.run(() =>
+        this.repository.update({
+          investigationId,
+          workspaceId: current.workspaceId,
+          caseId: current.caseId,
+          expectedRevision,
+          changes,
+        }),
+      );
+    });
   }
 
   private assertParentMutable(parent: Case): void {

@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import {
   check,
+  boolean,
   index,
   integer,
   pgTable,
@@ -11,15 +12,15 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 
-import { workspaces } from "../../../workspace/infrastructure/persistence/workspace.schema.js";
+// Workspace foreign keys are owned by the SQL migration. Do not import another
+// module's Drizzle table into Governance just to describe those foreign keys.
 
 export const governanceRoles = pgTable(
   "governance_roles",
   {
     id: uuid("id").primaryKey(),
-    workspaceId: uuid("workspace_id")
-      .notNull()
-      .references(() => workspaces.id),
+    workspaceId: uuid("workspace_id").notNull(),
+    caseRole: text("case_role"),
     key: text("key").notNull(),
     name: text("name").notNull(),
     description: text("description"),
@@ -30,6 +31,14 @@ export const governanceRoles = pgTable(
   },
   (table) => [
     uniqueIndex("governance_roles_workspace_key_uq").on(table.workspaceId, table.key),
+    uniqueIndex("governance_roles_workspace_case_role_uq").on(
+      table.workspaceId,
+      table.caseRole,
+    ),
+    check(
+      "governance_roles_case_role_check",
+      sql`${table.caseRole} IN ('OWNER', 'EDITOR', 'VIEWER')`,
+    ),
     check("governance_roles_revision_positive", sql`${table.revision} > 0`),
     check(
       "governance_roles_status_valid",
@@ -59,9 +68,8 @@ export const governanceRoleAssignments = pgTable(
   "governance_role_assignments",
   {
     id: uuid("id").primaryKey(),
-    workspaceId: uuid("workspace_id")
-      .notNull()
-      .references(() => workspaces.id),
+    workspaceId: uuid("workspace_id").notNull(),
+    caseMembership: boolean("case_membership").notNull().default(false),
     roleId: uuid("role_id")
       .notNull()
       .references(() => governanceRoles.id),
@@ -81,6 +89,16 @@ export const governanceRoleAssignments = pgTable(
     revokedAt: timestamp("revoked_at", { withTimezone: true, mode: "date" }),
   },
   (table) => [
+    uniqueIndex("governance_case_membership_active_uq")
+      .on(table.workspaceId, table.scopeResourceId, table.subjectId)
+      .where(sql`${table.caseMembership} AND ${table.status} = 'ACTIVE'`),
+    index("governance_case_membership_list_idx")
+      .on(table.workspaceId, table.subjectId, table.scopeResourceId.desc())
+      .where(sql`${table.caseMembership} AND ${table.status} = 'ACTIVE'`),
+    check(
+      "governance_case_membership_shape",
+      sql`NOT ${table.caseMembership} OR (${table.subjectType} = 'USER' AND ${table.scopeType} = 'CASE')`,
+    ),
     index("governance_assignments_subject_idx").on(
       table.workspaceId,
       table.subjectType,
@@ -127,9 +145,8 @@ export const governanceAssignmentHistory = pgTable(
     assignmentId: uuid("assignment_id")
       .notNull()
       .references(() => governanceRoleAssignments.id),
-    workspaceId: uuid("workspace_id")
-      .notNull()
-      .references(() => workspaces.id),
+    workspaceId: uuid("workspace_id").notNull(),
+    reason: text("reason"),
     action: text("action").notNull(),
     actorSubjectType: text("actor_subject_type").notNull(),
     actorSubjectId: text("actor_subject_id").notNull(),
@@ -139,6 +156,10 @@ export const governanceAssignmentHistory = pgTable(
     }).notNull(),
   },
   (table) => [
+    check(
+      "governance_assignment_history_reason_check",
+      sql`${table.reason} IS NULL OR char_length(${table.reason}) BETWEEN 1 AND 1000`,
+    ),
     index("governance_assignment_history_workspace_idx").on(
       table.workspaceId,
       table.occurredAt,

@@ -151,6 +151,8 @@ export class PostgresGovernanceRepository implements GovernanceRepository {
       .where(
         and(
           eq(governanceRoleAssignments.id, command.assignmentId),
+          // Typed memberships must use the locked last-owner/audit command path.
+          eq(governanceRoleAssignments.caseMembership, false),
           eq(governanceRoleAssignments.status, "ACTIVE"),
           eq(governanceRoleAssignments.revision, command.expectedRevision),
         ),
@@ -197,6 +199,7 @@ export class PostgresGovernanceRepository implements GovernanceRepository {
       SELECT
         r.id AS role_id,
         p.permission,
+        (a.case_membership AND r.case_role IS NOT NULL) AS case_membership,
         a.scope_type,
         a.scope_resource_type,
         a.scope_resource_id
@@ -219,6 +222,7 @@ export class PostgresGovernanceRepository implements GovernanceRepository {
       const row = raw as {
         role_id: string;
         permission: Permission;
+        case_membership: boolean;
         scope_type: GovernanceScope["type"];
         scope_resource_type: GovernanceResourceType | null;
         scope_resource_id: string | null;
@@ -226,6 +230,7 @@ export class PostgresGovernanceRepository implements GovernanceRepository {
       return {
         roleId: row.role_id,
         permission: row.permission,
+        caseMembership: row.case_membership,
         scope: restoreScope(
           row.scope_type,
           row.scope_resource_type,
