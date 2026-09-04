@@ -11,6 +11,7 @@ import { RequestContextModule, RequestContextStore } from "../request-context/in
 import { AuthenticationGuard } from "./authentication.guard.js";
 import { ACCESS_TOKEN_VERIFIER } from "./authentication.tokens.js";
 import { PublicEndpoint } from "./public-endpoint.decorator.js";
+import { SessionController } from "./session.controller.js";
 
 const principals: Record<string, AuthenticatedPrincipal> = {
   "valid-user": {
@@ -59,7 +60,7 @@ class AuthenticationIntegrationController {
 
 @Module({
   imports: [RequestContextModule],
-  controllers: [AuthenticationIntegrationController],
+  controllers: [AuthenticationIntegrationController, SessionController],
   providers: [
     { provide: ACCESS_TOKEN_VERIFIER, useValue: accessTokenVerifier },
     AuthenticationGuard,
@@ -94,6 +95,18 @@ describe("authentication HTTP boundary", () => {
     await request(app.getHttpServer())
       .get("/auth-integration/public")
       .expect(200, { status: "ok" });
+  });
+  it("returns only verified user identity for the web session and rejects service principals", async () => {
+    await request(app.getHttpServer()).get("/api/v1/session").expect(401);
+    await request(app.getHttpServer())
+      .get("/api/v1/session")
+      .set("authorization", "Bearer valid-service")
+      .expect(403);
+    await request(app.getHttpServer())
+      .get("/api/v1/session")
+      .set("authorization", "Bearer valid-user")
+      .expect("cache-control", "private, no-store")
+      .expect(200, { user: { id: "user-subject" } });
   });
 
   it.each([

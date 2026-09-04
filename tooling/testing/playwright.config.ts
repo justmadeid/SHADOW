@@ -39,10 +39,27 @@ export default defineConfig({
 
   webServer: process.env.E2E_EXTERNAL_SERVER
     ? undefined
-    : {
-        command: "pnpm --filter platform-web dev",
-        url: baseURL,
-        reuseExistingServer: !process.env.CI,
-        timeout: 120_000,
-      },
+    : [
+        {
+          command: "node shell-fixture.mjs",
+          url: "http://127.0.0.1:43101/health",
+          reuseExistingServer: false,
+        },
+        {
+          command: "pnpm --filter platform-web dev",
+          url: baseURL,
+          reuseExistingServer: false,
+          env: {
+            WEB_ORIGIN: "http://127.0.0.1:3000",
+            WEB_PLATFORM_API_URL: "http://127.0.0.1:43101/api/v1",
+            WEB_OIDC_ISSUER: "http://127.0.0.1:43101",
+            WEB_OIDC_CLIENT_ID: "platform-web-test",
+            WEB_OIDC_AUDIENCE: "platform-api-test",
+            WEB_SESSION_KEY: "ab".repeat(32),
+            WEB_OIDC_CLIENT_SECRET: "synthetic-test-client-secret",
+            WEB_OIDC_SCOPE: "openid",
+          },
+          timeout: 120_000,
+        },
+      ],
 });

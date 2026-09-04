@@ -21,6 +21,94 @@ servers:
 security:
   - oidcAccessToken: []
 paths:
+  /session:
+    get:
+      operationId: getUserSession
+      summary: Return minimal verified user identity for the web session
+      tags: [Workspace]
+      description: No tokens or role claims returned. Service principals are not browser users. Cache-Control is private, no-store.
+      responses:
+        "200":
+          description: Verified user identity
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user]
+                additionalProperties: false
+                properties:
+                  user:
+                    type: object
+                    required: [id]
+                    additionalProperties: false
+                    properties:
+                      id: { type: string }
+        "401":
+          description: Invalid authentication
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "403":
+          description: User principal required
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+  /cases/{caseId}/access:
+    get:
+      operationId: getCaseAccess
+      summary: Current Case capabilities for permission-aware UI
+      tags: [Case]
+      description: >-
+        Requires current Workspace and Case access; absent and forbidden Cases both
+        return 404. Capabilities are evaluated by Governance in canonical Case scope.
+        This response is UI guidance, not a reusable authorization grant. All writes
+        reauthorize independently. Cache-Control is private, no-store.
+      parameters:
+        - name: caseId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Current allowed actions
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [caseId, workspaceId, permissions]
+                additionalProperties: false
+                properties:
+                  caseId: { type: string, format: uuid }
+                  workspaceId: { type: string, format: uuid }
+                  permissions:
+                    type: object
+                    required: [view, update, createInvestigation, manageMembers]
+                    additionalProperties: false
+                    properties:
+                      view: { type: boolean }
+                      update: { type: boolean }
+                      createInvestigation: { type: boolean }
+                      manageMembers: { type: boolean }
+        "400":
+          description: Invalid Case ID
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401":
+          description: Invalid authentication
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "403":
+          description: User principal required
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "404":
+          description: Case absent or intentionally undisclosed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
   /workspaces:
     post:
       operationId: createWorkspace

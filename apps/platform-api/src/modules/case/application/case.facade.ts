@@ -70,6 +70,38 @@ export class CaseFacade {
     return (await this.listPage(workspaceId)).items;
   }
 
+  async access(caseId: string) {
+    return this.transactions.run(async () => {
+      const found = await this.get(caseId);
+      await this.memberships.lockCase(found.workspaceId, found.id);
+      await this.get(caseId);
+      const permissions = [
+        "CASE_UPDATE",
+        "INVESTIGATION_CREATE",
+        "GOVERNANCE_ROLE_MANAGE",
+      ] as const;
+      const decisions = await Promise.all(
+        permissions.map((action) =>
+          this.policy.decide({
+            action,
+            resource: { type: "CASE", id: found.id, workspaceId: found.workspaceId },
+            context: { caseId: found.id, caseMembershipRequired: true },
+          }),
+        ),
+      );
+      return {
+        caseId: found.id,
+        workspaceId: found.workspaceId,
+        permissions: {
+          view: true,
+          update: decisions[0]!.allowed,
+          createInvestigation: decisions[1]!.allowed,
+          manageMembers: decisions[2]!.allowed,
+        },
+      };
+    });
+  }
+
   async listPage(workspaceId: string, cursor?: string) {
     this.requireUserId();
     await this.workspaces.get(workspaceId);

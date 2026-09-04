@@ -31,3 +31,4 @@ export type {
   ClassifiedFieldView,
   MatchStatus,
 } from "./classification.js";
+export * from "./shell.js";

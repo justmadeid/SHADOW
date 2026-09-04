@@ -230,6 +230,43 @@ describe("P1-006 Case authorization HTTP and persistence", () => {
     );
     await get(`/cases/${other.id}`, "peer").expect(404);
   });
+  it("returns current contextual capabilities without disclosing inaccessible Cases", async () => {
+    const f = await fixture();
+    await get(`/cases/${f.case.id}/access`, "owner")
+      .expect("cache-control", "private, no-store")
+      .expect(200)
+      .expect(({ body }) =>
+        expect(body).toEqual({
+          workspaceId: f.workspaceId,
+          caseId: f.case.id,
+          permissions: {
+            view: true,
+            update: true,
+            createInvestigation: true,
+            manageMembers: true,
+          },
+        }),
+      );
+    await get(`/cases/${f.case.id}/access`, "peer").expect(404);
+    await get(`/cases/${f.case.id}/access`, "outsider").expect(404);
+    const peer = await asUser("owner", () =>
+      cases.addMember(f.case.id, "peer", "VIEWER", "Synthetic review"),
+    );
+    await get(`/cases/${f.case.id}/access`, "peer")
+      .expect(200)
+      .expect(({ body }) =>
+        expect(body.permissions).toEqual({
+          view: true,
+          update: false,
+          createInvestigation: false,
+          manageMembers: false,
+        }),
+      );
+    await asUser("owner", () =>
+      cases.removeMember(f.case.id, peer.id, peer.revision, "Synthetic removal"),
+    );
+    await get(`/cases/${f.case.id}/access`, "peer").expect(404);
+  });
 
   it("revokes deep-link/list access without reviving a removed creator on idempotency replay", async () => {
     const f = await fixture();

@@ -6,9 +6,11 @@ import { APP_GUARD } from "@nestjs/core";
 import { RequestContextModule } from "../request-context/index.js";
 import { AuthenticationGuard } from "./authentication.guard.js";
 import { ACCESS_TOKEN_VERIFIER } from "./authentication.tokens.js";
+import { SessionController } from "./session.controller.js";
 
 @Module({
   imports: [RequestContextModule],
+  controllers: [SessionController],
   providers: [
     {
       provide: ACCESS_TOKEN_VERIFIER,
