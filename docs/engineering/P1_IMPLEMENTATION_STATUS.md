@@ -12,7 +12,7 @@ Milestone: **M1 — Protected Case Shell**
 | `P1-002` Workspace domain | Complete; merged in PR #5 | UUIDv7 Workspace aggregate, settings, initial membership/history, idempotent persistence, member-scoped reads, Outbox events, migration, and API contract passed the real PR Quality Gate |
 | `P1-003` Case domain | Complete; merged in PR #6 | UUIDv7 Case aggregate, opaque human-readable code, classification, lifecycle, optimistic concurrency, Outbox events, migration, and API contract passed the real PR and post-merge Quality Gates |
 | `P1-004` Investigation domain | Complete; merged in PR #8 | Case-scoped Investigation branch/objective, lifecycle, idempotency, optimistic concurrency, Outbox events, migration, and API contract passed the real PR Quality Gate |
-| `P1-005` Governance permission model | Not started | Depends on P1-001 and P1-002 |
+| `P1-005` Governance permission model | Complete; tracked in PR #9 | Central `PolicyEnforcer`, explicit action/resource/context requests, user/service role grants, scoped PostgreSQL persistence, deny-by-default decisions, revocation, and confidentiality-safe enforcement are covered locally and submitted to the real PR Quality Gate |
 | `P1-006` Case membership policy | Not started | Depends on P1-003 and P1-005 |
 | `P1-007` Data classification primitive | Not started | Depends on P1-005 |
 | `P1-008` Critical audit baseline | Not started | Depends on P1-005 |
@@ -181,3 +181,52 @@ PostgreSQL/HTTP integration tests, 3 contract tests, and 4 Playwright E2E tests
 passed. Runtime boot mapped all four Investigation routes and an unauthenticated
 detail request returned `401 AUTH_UNAUTHENTICATED`. Gitleaks found no secrets and
 the production dependency audit found no known vulnerabilities.
+
+## P1-005 implementation contract
+
+- Owner: Governance module; other domains consume only its exported
+  `PolicyEnforcer` facade.
+- Policy request: a registered action, typed resource reference with Workspace
+  scope, and optional Case/Investigation/reason-for-access context.
+- Subject model: OIDC-authenticated `USER` and allowlisted `SERVICE` principals
+  are evaluated as distinct subject types; matching text identifiers cannot
+  cross principal kinds.
+- Role model: Workspace-owned roles contain an explicit permission set. A grant
+  never implies another permission, including restricted identifier use versus
+  restricted identifier view.
+- Scope model: grants apply to a whole Workspace, one Case, or one exact typed
+  resource. Contextual Case scope is evaluated centrally.
+- Decision contract: missing principal, missing permission, scope mismatch, and
+  missing reason-for-access are stable deny outcomes. No grant means deny.
+- Enforcement contract: callers may return `403 ACCESS_DENIED` or request a
+  confidentiality-safe resource-specific `404` without duplicating policy
+  evaluation.
+- Persistence: PostgreSQL owns roles, role permissions, assignments, and
+  append-only assignment grant/revoke history. Active roles and assignments are
+  joined for every decision; revocation takes effect on the next evaluation.
+- Deferred integration: Case membership provisioning and protected Case route
+  enforcement belong to P1-006. Classification-aware field/source/export hooks
+  belong to P1-007; critical durable audit delivery belongs to P1-008.
+- Deferred surface: Governance administration HTTP endpoints remain outside the
+  field-complete API baseline, matching the locked OpenAPI skeleton.
+
+## P1-005 foundation evidence
+
+- [x] Role, permission, action, resource, and context are explicit typed models.
+- [x] Workspace, Case, and exact-resource scopes are evaluated centrally.
+- [x] Permission-to-use remains distinct from permission-to-view.
+- [x] Restricted operations can require non-empty reason-for-access context.
+- [x] User and service identities use separate assignment namespaces.
+- [x] Missing grant and scope mismatch are deny-by-default decisions.
+- [x] Callers can enforce a normal `403` or confidentiality-safe `404`.
+- [x] Revoked assignments stop authorizing immediately.
+- [x] Assignment history records append-only `GRANTED` and `REVOKED` changes.
+- [x] Fresh-database migration order preserves the Workspace foreign key.
+- [x] Governance unit tests: 9 passed.
+- [x] Governance PostgreSQL integration tests: 4 passed.
+- [x] Full local repository quality gate passes.
+
+Validation totals after the Governance slice: 56 unit tests, 29 PostgreSQL/HTTP
+integration tests, 3 contract tests, and 4 Playwright E2E tests passed. The full
+local static/build gate and Gitleaks scan also passed; the PR Quality Gate will
+independently run the production dependency audit.
