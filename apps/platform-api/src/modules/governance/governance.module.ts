@@ -1,5 +1,7 @@
 import { Module } from "@nestjs/common";
+import { AuditModule, AuditFacade } from "../audit/index.js";
 import { ClassificationPolicy } from "./application/classification-policy.js";
+import { AuditedDataAccess } from "./application/audited-data-access.js";
 
 import { DatabaseContext } from "@intelligence/database";
 import { DatabaseModule } from "../../platform/database/database.module.js";
@@ -15,15 +17,20 @@ import { PostgresGovernanceRepository } from "./infrastructure/persistence/postg
 import { GOVERNANCE_REPOSITORY, CASE_MEMBERSHIP_STORE } from "./governance.tokens.js";
 
 @Module({
-  imports: [DatabaseModule, RequestContextModule],
+  imports: [DatabaseModule, RequestContextModule, AuditModule],
   providers: [
     {
       provide: CASE_MEMBERSHIP_STORE,
-      inject: [DatabaseContext, RequestContextStore],
-      useFactory: (database: DatabaseContext, context: RequestContextStore) =>
+      inject: [DatabaseContext, RequestContextStore, AuditFacade],
+      useFactory: (
+        database: DatabaseContext,
+        context: RequestContextStore,
+        audit: AuditFacade,
+      ) =>
         new PostgresCaseMembershipStore(
           database,
           new PostgresOutboxStore(database, context),
+          audit,
         ),
     },
     {
@@ -34,8 +41,14 @@ import { GOVERNANCE_REPOSITORY, CASE_MEMBERSHIP_STORE } from "./governance.token
     },
     PolicyEnforcer,
     ClassificationPolicy,
+    AuditedDataAccess,
     CaseMembershipFacade,
   ],
-  exports: [PolicyEnforcer, CaseMembershipFacade, ClassificationPolicy],
+  exports: [
+    PolicyEnforcer,
+    CaseMembershipFacade,
+    ClassificationPolicy,
+    AuditedDataAccess,
+  ],
 })
 export class GovernanceModule {}

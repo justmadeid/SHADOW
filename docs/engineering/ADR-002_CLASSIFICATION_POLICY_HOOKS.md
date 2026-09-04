@@ -106,6 +106,10 @@ Rollback removes the additive metadata/hooks without rewriting canonical data.
 
 ## References
 
+P1-008 follow-up: [ADR-003](ADR-003_CRITICAL_AUDIT_BASELINE.md) adds the
+`AuditedDataAccess` commit boundary and separate canonical Audit store. The pure
+planning hooks above still do not execute or satisfy audit on their own.
+
 - P1-007 in `docs/knowledge/20_DEVELOPMENT_BACKLOG_V1.md`
 - `docs/knowledge/34_DATA_CLASSIFICATION_HANDLING_MATRIX.md`
 - `docs/knowledge/08_CROSS_CUTTING_ARCHITECTURE.md`

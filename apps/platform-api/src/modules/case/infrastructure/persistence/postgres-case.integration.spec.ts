@@ -41,6 +41,10 @@ describe("Case persistence", () => {
 
     for (const migration of [
       new URL(
+        "../../../audit/infrastructure/persistence/migrations/0001_create_audit.sql",
+        import.meta.url,
+      ),
+      new URL(
         "../../../../platform/events/outbox/infrastructure/persistence/migrations/0001_create_platform_outbox.sql",
         import.meta.url,
       ),

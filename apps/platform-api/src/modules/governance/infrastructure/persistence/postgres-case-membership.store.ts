@@ -1,5 +1,6 @@
 import { and, eq, sql } from "drizzle-orm";
 import { DatabaseContext } from "@intelligence/database";
+import { AuditFacade } from "../../../audit/index.js";
 import { AppError } from "../../../../platform/errors/index.js";
 import { newUuid } from "../../../../platform/ids/uuid.js";
 import type { OutboxStore } from "../../../../platform/events/outbox/domain/outbox-store.js";
@@ -20,6 +21,7 @@ export class PostgresCaseMembershipStore implements CaseMembershipStore {
   constructor(
     private readonly database: DatabaseContext,
     private readonly outbox: OutboxStore,
+    private readonly audit: AuditFacade,
   ) {}
 
   async lockCase(workspaceId: string, caseId: string): Promise<void> {
@@ -248,6 +250,21 @@ export class PostgresCaseMembershipStore implements CaseMembershipStore {
         revision: member.revision,
       },
       occurredAt: now,
+    });
+    await this.audit.record({
+      operationId: historyId,
+      action:
+        action === "GRANTED" ? "CASE_MEMBERSHIP_GRANTED" : "CASE_MEMBERSHIP_REVOKED",
+      outcome: "SUCCEEDED",
+      resource: {
+        type: "CASE",
+        id: member.caseId,
+        workspaceId: member.workspaceId,
+        caseId: member.caseId,
+      },
+      membershipId: member.id,
+      resourceRevision: member.revision,
+      reason,
     });
   }
 }

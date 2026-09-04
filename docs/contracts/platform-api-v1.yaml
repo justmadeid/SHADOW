@@ -128,6 +128,8 @@ paths:
       summary: Create a draft Case in an accessible Workspace
       description: >-
         Atomically creates the Case and grants its creator OWNER membership.
+        Required membership audit and reference-only Outbox intents commit in
+        the same transaction; audit failure rolls back creation.
         Idempotency replay rechecks access and never restores revoked membership.
       tags: [Case]
       parameters:
@@ -176,6 +178,11 @@ paths:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
         "409":
           description: Idempotency or generated-code conflict
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "503":
+          description: Required durable audit unavailable (AUDIT_DURABILITY_FAILED); no Case creation committed
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }

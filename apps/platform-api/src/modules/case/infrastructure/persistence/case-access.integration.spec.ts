@@ -61,6 +61,7 @@ describe("P1-006 Case authorization HTTP and persistence", () => {
     started = await startPostgresTestContainer();
     client = createDatabaseClient({ databaseUrl: started.databaseUrl, maxPoolSize: 8 });
     for (const migration of [
+      "../../../audit/infrastructure/persistence/migrations/0001_create_audit.sql",
       "../../../../platform/events/outbox/infrastructure/persistence/migrations/0001_create_platform_outbox.sql",
       "../../../workspace/infrastructure/persistence/migrations/0001_create_workspace.sql",
       "./migrations/0001_create_case.sql",
@@ -447,6 +448,46 @@ describe("P1-006 Case authorization HTTP and persistence", () => {
       await client.db.execute(
         sql.raw(
           "DROP TRIGGER fail_membership ON platform_outbox_events; DROP FUNCTION fail_membership_event();",
+        ),
+      );
+    }
+  });
+
+  it("returns a sanitized 503 and commits no Case when critical audit is unavailable", async () => {
+    const f = await fixture();
+    await client.db.execute(
+      sql.raw(
+        `CREATE FUNCTION fail_http_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'synthetic-private-audit-details'; END $$; CREATE TRIGGER fail_http_audit BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION fail_http_audit();`,
+      ),
+    );
+    const key = newUuid();
+    try {
+      const response = await request(app.getHttpServer())
+        .post("/api/v1/cases")
+        .set("authorization", "Bearer owner")
+        .set("idempotency-key", key)
+        .send({ ...f.input, title: "Audit failure case" })
+        .expect(503);
+      expect(response.body.error.code).toBe("AUDIT_DURABILITY_FAILED");
+      expect(JSON.stringify(response.body)).not.toContain("synthetic-private");
+      expect(
+        (
+          await client.db.execute(
+            sql`SELECT case_id FROM case_idempotency WHERE idempotency_key = ${key}`,
+          )
+        ).rows,
+      ).toEqual([]);
+      expect(
+        (
+          await client.db.execute(
+            sql`SELECT id FROM cases WHERE workspace_id = ${f.workspaceId}`,
+          )
+        ).rows,
+      ).toHaveLength(1);
+    } finally {
+      await client.db.execute(
+        sql.raw(
+          "DROP TRIGGER fail_http_audit ON audit_events; DROP FUNCTION fail_http_audit();",
         ),
       );
     }
