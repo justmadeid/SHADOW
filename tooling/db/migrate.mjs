@@ -35,6 +35,7 @@ const ownerOrder = [
   "/modules/workspace/",
   "/modules/case/",
   "/modules/investigation/",
+  "/modules/governance/",
 ];
 
 const migrations = walk(path.join(root, "apps")).sort((left, right) => {
