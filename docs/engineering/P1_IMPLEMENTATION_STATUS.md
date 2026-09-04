@@ -12,7 +12,7 @@ Milestone: **M1 — Protected Case Shell**
 | `P1-002` Workspace domain | Complete; merged in PR #5 | UUIDv7 Workspace aggregate, settings, initial membership/history, idempotent persistence, member-scoped reads, Outbox events, migration, and API contract passed the real PR Quality Gate |
 | `P1-003` Case domain | Complete; merged in PR #6 | UUIDv7 Case aggregate, opaque human-readable code, classification, lifecycle, optimistic concurrency, Outbox events, migration, and API contract passed the real PR and post-merge Quality Gates |
 | `P1-004` Investigation domain | Complete; merged in PR #8 | Case-scoped Investigation branch/objective, lifecycle, idempotency, optimistic concurrency, Outbox events, migration, and API contract passed the real PR Quality Gate |
-| `P1-005` Governance permission model | Implementation complete; PR validation pending | Central `PolicyEnforcer`, explicit action/resource/context requests, user/service role grants, scoped PostgreSQL persistence, deny-by-default decisions, revocation, and confidentiality-safe enforcement are covered locally |
+| `P1-005` Governance permission model | Complete; tracked in PR #9 | Central `PolicyEnforcer`, explicit action/resource/context requests, user/service role grants, scoped PostgreSQL persistence, deny-by-default decisions, revocation, and confidentiality-safe enforcement are covered locally and submitted to the real PR Quality Gate |
 | `P1-006` Case membership policy | Not started | Depends on P1-003 and P1-005 |
 | `P1-007` Data classification primitive | Not started | Depends on P1-005 |
 | `P1-008` Critical audit baseline | Not started | Depends on P1-005 |
