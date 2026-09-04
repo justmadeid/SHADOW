@@ -10,6 +10,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@intelligence/contracts": "workspace:*",
     "@intelligence/auth": "workspace:*",
     "@intelligence/config": "workspace:*",
     "@intelligence/database": "workspace:*",

@@ -1,13 +1,7 @@
 import { AppError } from "../../../platform/errors/index.js";
 
-export const DATA_CLASSIFICATIONS = [
-  "PUBLIC",
-  "INTERNAL",
-  "SENSITIVE",
-  "RESTRICTED",
-] as const;
-
-export type DataClassification = (typeof DATA_CLASSIFICATIONS)[number];
+import { DATA_CLASSIFICATIONS, type DataClassification } from "@intelligence/contracts";
+export { DATA_CLASSIFICATIONS, type DataClassification } from "@intelligence/contracts";
 export type CaseStatus = "DRAFT" | "ACTIVE" | "CLOSED" | "ARCHIVED";
 export type CaseAction = "CLOSE" | "REOPEN" | "ARCHIVE";
 

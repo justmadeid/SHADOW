@@ -23,5 +23,11 @@ export type ResourceRef = {
   caseId?: string;
 };
 
-export type DataClassification = "PUBLIC" | "INTERNAL" | "SENSITIVE" | "RESTRICTED";
-export type FieldVisibility = "FULL" | "MASKED" | "MATCH_ONLY" | "HIDDEN";
+export { DATA_CLASSIFICATIONS, FIELD_VISIBILITIES } from "./classification.js";
+export type {
+  DataClassification,
+  FieldVisibility,
+  ClassificationHandling,
+  ClassifiedFieldView,
+  MatchStatus,
+} from "./classification.js";

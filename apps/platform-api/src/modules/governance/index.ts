@@ -1,4 +1,15 @@
 export { GovernanceModule } from "./governance.module.js";
+export {
+  ClassificationPolicy,
+  type DisplayPolicyRequest,
+  type ExportPolicyRequest,
+  type SourceAccessPolicyRequest,
+} from "./application/classification-policy.js";
+export {
+  classificationHandling,
+  deriveClassification,
+  presentClassifiedField,
+} from "./domain/classification.js";
 export { CaseMembershipFacade } from "./application/case-membership.facade.js";
 export type { CaseMembership, CaseRole } from "./domain/case-membership.js";
 export { PolicyEnforcer, type EnforceOptions } from "./application/policy-enforcer.js";

@@ -13,6 +13,8 @@ import { RequestContextStore } from "../../../../platform/request-context/index.
 import { PolicyEnforcer } from "../../application/policy-enforcer.js";
 import { PostgresGovernanceRepository } from "./postgres-governance.repository.js";
 import { CASE_ROLE_PERMISSIONS } from "../../domain/case-membership.js";
+import { ClassificationPolicy } from "../../application/classification-policy.js";
+import type { PolicyRequest } from "../../domain/governance.js";
 
 describe("Governance persistence and enforcement", () => {
   let started: Awaited<ReturnType<typeof startPostgresTestContainer>>;
@@ -178,6 +180,112 @@ describe("Governance persistence and enforcement", () => {
     expect(history.rows).toEqual([
       { action: "GRANTED", actor_subject_id: "workspace-owner" },
     ]);
+  });
+
+  it("rechecks persisted membership and distinct use/view grants for classified fields", async () => {
+    const classifier = new ClassificationPolicy(enforcer);
+    const access: PolicyRequest = {
+      action: "CASE_VIEW",
+      resource: { type: "CASE", id: legacyCase, workspaceId: legacyWorkspace },
+      context: {
+        caseId: legacyCase,
+        caseMembershipRequired: true,
+        reasonForAccess: "Synthetic classified review",
+      },
+    };
+    const display = (request = access, user = "legacy-active") =>
+      runAsUser(user, () =>
+        classifier.display({
+          access: request,
+          classification: "RESTRICTED",
+          fieldKind: "IDENTIFIER",
+        }),
+      );
+    await expect(display()).resolves.toMatchObject({ visibility: "MASKED" });
+    const useRole = await transactions.run(() =>
+      repository.createRole({
+        workspaceId: legacyWorkspace,
+        key: "CLASSIFIED_MATCHER",
+        name: "Classified matcher",
+        permissions: ["IDENTIFIER_USE_RESTRICTED"],
+      }),
+    );
+    const useGrant = await transactions.run(() =>
+      repository.createAssignment({
+        workspaceId: legacyWorkspace,
+        roleId: useRole.id,
+        subjectType: "USER",
+        subjectId: "legacy-active",
+        scope: { type: "CASE", resourceId: legacyCase },
+        grantedBySubjectType: "USER",
+        grantedBySubjectId: "test-admin",
+      }),
+    );
+    await expect(display()).resolves.toMatchObject({
+      visibility: "MATCH_ONLY",
+      requiresDurableAudit: true,
+    });
+    await expect(
+      display({
+        ...access,
+        context: { caseId: legacyCase, caseMembershipRequired: true },
+      }),
+    ).resolves.toMatchObject({ visibility: "MASKED" });
+    await expect(
+      display({ ...access, resource: { ...access.resource, id: caseB } }),
+    ).resolves.toMatchObject({ visibility: "HIDDEN" });
+    await expect(
+      display({ ...access, resource: { ...access.resource, workspaceId: workspaceB } }),
+    ).resolves.toMatchObject({ visibility: "HIDDEN" });
+    await expect(display(access, "legacy-gone")).resolves.toMatchObject({
+      visibility: "HIDDEN",
+    });
+    await transactions.run(() =>
+      repository.revokeAssignment({
+        assignmentId: useGrant.id,
+        expectedRevision: 1,
+        revokedBySubjectType: "USER",
+        revokedBySubjectId: "test-admin",
+      }),
+    );
+    await expect(display()).resolves.toMatchObject({ visibility: "MASKED" });
+    const viewRole = await transactions.run(() =>
+      repository.createRole({
+        workspaceId: legacyWorkspace,
+        key: "CLASSIFIED_READER",
+        name: "Classified reader",
+        permissions: ["IDENTIFIER_VIEW_RESTRICTED"],
+      }),
+    );
+    await transactions.run(() =>
+      repository.createAssignment({
+        workspaceId: legacyWorkspace,
+        roleId: viewRole.id,
+        subjectType: "USER",
+        subjectId: "legacy-active",
+        scope: { type: "CASE", resourceId: legacyCase },
+        grantedBySubjectType: "USER",
+        grantedBySubjectId: "test-admin",
+      }),
+    );
+    await expect(display()).resolves.toMatchObject({
+      visibility: "FULL",
+      requiresDurableAudit: true,
+    });
+    await expect(
+      runAsUser("legacy-active", () =>
+        classifier.sourceAccess({
+          access,
+          classification: "RESTRICTED",
+          policy: {
+            enabled: true,
+            usePermission: "IDENTIFIER_USE_RESTRICTED",
+            restrictedPermission: "IDENTIFIER_USE_RESTRICTED",
+            rawPersistence: "MINIMIZED",
+          },
+        }),
+      ),
+    ).resolves.toMatchObject({ allowed: false });
   });
 
   it("enforces permission, subject, workspace, and case scope centrally", async () => {

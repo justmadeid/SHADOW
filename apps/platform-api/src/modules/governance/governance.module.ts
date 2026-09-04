@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { ClassificationPolicy } from "./application/classification-policy.js";
 
 import { DatabaseContext } from "@intelligence/database";
 import { DatabaseModule } from "../../platform/database/database.module.js";
@@ -32,8 +33,9 @@ import { GOVERNANCE_REPOSITORY, CASE_MEMBERSHIP_STORE } from "./governance.token
         new PostgresGovernanceRepository(database),
     },
     PolicyEnforcer,
+    ClassificationPolicy,
     CaseMembershipFacade,
   ],
-  exports: [PolicyEnforcer, CaseMembershipFacade],
+  exports: [PolicyEnforcer, CaseMembershipFacade, ClassificationPolicy],
 })
 export class GovernanceModule {}
