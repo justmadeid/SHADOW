@@ -1,5 +1,9 @@
 export { GovernanceModule } from "./governance.module.js";
 export {
+  AuditedDataAccess,
+  type AuditOperation,
+} from "./application/audited-data-access.js";
+export {
   ClassificationPolicy,
   type DisplayPolicyRequest,
   type ExportPolicyRequest,

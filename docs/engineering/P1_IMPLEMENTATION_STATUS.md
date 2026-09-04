@@ -13,9 +13,9 @@ Milestone: **M1 — Protected Case Shell**
 | `P1-003` Case domain | Complete; merged in PR #6 | UUIDv7 Case aggregate, opaque human-readable code, classification, lifecycle, optimistic concurrency, Outbox events, migration, and API contract passed the real PR and post-merge Quality Gates |
 | `P1-004` Investigation domain | Complete; merged in PR #8 | Case-scoped Investigation branch/objective, lifecycle, idempotency, optimistic concurrency, Outbox events, migration, and API contract passed the real PR Quality Gate |
 | `P1-005` Governance permission model | Complete; tracked in PR #9 | Central `PolicyEnforcer`, explicit action/resource/context requests, user/service role grants, scoped PostgreSQL persistence, deny-by-default decisions, revocation, and confidentiality-safe enforcement are covered locally and submitted to the real PR Quality Gate |
-| `P1-006` Case membership policy | Implemented locally; user owns commit/PR; dependency audit pending registry availability | Explicit Case OWNER/EDITOR/VIEWER, protected Case/Investigation routes, membership-filtered pagination, transactional grant/revoke history and Outbox, legacy creator migration, and IDOR/concurrency coverage; see validation below |
-| `P1-007` Data classification primitive | Implemented locally; user owns commit/PR; dependency audit pending registry availability | Shared classification vocabulary, versioned handling metadata, server display/export/source policy hooks, safe field presenter, no automatic derived downgrade, Case HTTP handling metadata, and negative-path tests; see validation below |
-| `P1-008` Critical audit baseline | Not started | Depends on P1-005 |
+| `P1-006` Case membership policy | Implemented locally; user owns Git/PR; current dependency audit passed in P1-008 | Explicit Case OWNER/EDITOR/VIEWER, protected Case/Investigation routes, membership-filtered pagination, transactional grant/revoke history and Outbox, legacy creator migration, and IDOR/concurrency coverage; see validation below |
+| `P1-007` Data classification primitive | Implemented locally; user owns Git/PR; current dependency audit passed in P1-008 | Shared classification vocabulary, versioned handling metadata, server display/export/source policy hooks, safe field presenter, no automatic derived downgrade, Case HTTP handling metadata, and negative-path tests; see validation below |
+| `P1-008` Critical audit baseline | Implemented and validated locally; user owns commit/PR | Separate append-only Audit, atomic membership/history/Outbox, rollback-only failures, and audited sensitive-access authorization; see ADR-003 and validation below |
 | `P1-009` Platform shell auth/workspace/case context | Not started | Depends on backend Workspace, Case, and membership foundations |
 | `P1-010` Case CRUD UI in SHADOW | Not started | Depends on P1-004 and P1-009 |
 
@@ -340,3 +340,54 @@ independently run the production dependency audit.
   returned `ERR_SOCKET_TIMEOUT` from the npm registry. Rerun when the registry is
   reachable; the feature does not add or update any third-party dependency.
 - No commit, pull, push, PR, database migration, or deployment was performed.
+
+## P1-008 implementation contract
+
+- Owner: Audit; canonical source of truth is append-only PostgreSQL `audit_events`.
+  Dependencies: P0-007 transactional Outbox and P1-005 Governance; integrates the
+  P1-006 membership boundary and P1-007 classification policy hooks.
+- Case creator OWNER initialization, grant and revoke commit business state,
+  Governance history, canonical Audit, and reference-only Outbox atomically.
+  No-op grants/idempotent Case replay do not produce duplicate Audit records.
+- Authenticated USER/SERVICE actor and correlation come from RequestContext.
+  Typed fields reject arbitrary payloads and actor spoofing. Protected reasons
+  remain in canonical storage, not queue payloads or exception causes.
+- Audit failures mark the entire transaction rollback-only, even if a caller
+  catches the error. Database triggers reject UPDATE, DELETE and TRUNCATE.
+  Duplicate operation identity with different canonical content returns 409.
+- `AuditedDataAccess` owns the commit boundary for sensitive display and
+  source/export authorization. It rechecks policy after acquiring the Case lock,
+  audits before loading sensitive fields, and releases the result only after
+  commit. MASKED/HIDDEN never load raw fields; MATCH_ONLY never returns values.
+- Export/source records mean AUTHORIZED or DENIED intent, not completed external
+  execution. No new source/export/audit HTTP API, frontend, or consumer was added.
+  Existing Case metadata and internal generic provisioning are not globally
+  intercepted; future command owners must adopt the Audit facade.
+- One additive migration; no historical Audit backfill or changes to applied SQL.
+  Runtime database role restrictions and external immutable archival are deployment
+  concerns; triggers are not protection against malicious superuser/DDL access.
+- Contracts: [critical-audit-v1](../contracts/critical-audit-v1.md), Case-create
+  `503 AUDIT_DURABILITY_FAILED` in OpenAPI, and [ADR-003](ADR-003_CRITICAL_AUDIT_BASELINE.md).
+
+## P1-008 validation evidence (2026-09-04)
+
+- Unit: **120 passed**, including strict Audit input, verified actor propagation,
+  sanitized errors, and rollback-only transaction-context isolation.
+- PostgreSQL/HTTP integration: **55 passed**, including 11 dedicated Audit tests
+  and the Case HTTP 503 failure path. Covers failed canonical/Outbox inserts,
+  create/grant rollback, caught-failure revocation rollback, immutable triggers,
+  concurrent deduplication/conflicts, commit-before-disclosure, safe masking/match,
+  revocation/retry, and AUTHORIZED/DENIED source/export intents.
+- Contract: **6 passed**; OpenAPI lint passed with the additional 503 response.
+- Static/build: architecture boundaries (119 source files), 6 boundary tests,
+  dependency graph, formatting, lint, typecheck, and all package builds passed.
+- Migration gate: **7 SQL migrations** passed; repository migrations also applied
+  successfully through the real migration runner on ephemeral PostgreSQL.
+- Playwright: **4 foundation E2E tests passed**. No new UI is introduced.
+- Security: Gitleaks found no secrets. Production `pnpm audit --prod
+  --audit-level=high` succeeded and reported **no known vulnerabilities**. This
+  resolves the earlier registry-timeout verification gap for the current tree.
+  No third-party dependency or lockfile change was required by P1-008.
+- No commit, pull, push, PR, user-database migration or deployment was performed.
+  Apply the additive Audit migration before starting the new API build; preserve
+  Audit data on rollback. User owns the Git workflow and remote Quality Gate.
