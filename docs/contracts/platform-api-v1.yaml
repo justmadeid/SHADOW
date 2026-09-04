@@ -10,7 +10,9 @@ info:
     administration currently has no public HTTP surface. Denied resource access
     returns the same 404 contract as a missing resource; broad Workspace or
     entity-discovery grants do not bypass Case membership. Classification-specific
-    restrictions are a separate P1-007 layer and are not implied by these roles.
+    restrictions are evaluated by Governance policy hooks and are not implied by
+    these roles. Case handling metadata describes obligations, not an access grant.
+    Export/source runtime enforcement and identifier endpoints are later slices.
   license:
     name: Proprietary
     identifier: LicenseRef-Proprietary
@@ -650,6 +652,7 @@ components:
         - description
         - status
         - classification
+        - handling
         - revision
         - createdAt
         - updatedAt
@@ -668,6 +671,8 @@ components:
           enum: [DRAFT, ACTIVE, CLOSED, ARCHIVED]
         classification:
           $ref: "#/components/schemas/DataClassification"
+        handling:
+          $ref: "#/components/schemas/ClassificationHandling"
         revision:
           type: integer
           minimum: 1
@@ -675,6 +680,30 @@ components:
         updatedAt: { type: string, format: date-time }
         closedAt: { type: [string, "null"], format: date-time }
         archivedAt: { type: [string, "null"], format: date-time }
+    ClassificationHandling:
+      type: object
+      description: >-
+        Server-derived P1-007 handling obligations, not authorization or proof
+        of downstream enforcement. Clients must not override these values.
+        PUBLIC does not bypass authenticated resource access. P1-007 does not
+        turn these hints into export, retention, indexing, or source runtimes.
+      additionalProperties: false
+      required: [classification, policyVersion, identifierDefaultVisibility, applicationLogs, metricsLabels, queuePayload, searchProjection, rawPersistence, export, workerRouting, retention, objectAccess, crossCaseDisclosure]
+      properties:
+        classification:
+          $ref: "#/components/schemas/DataClassification"
+        policyVersion: { type: integer, const: 1 }
+        identifierDefaultVisibility: { type: string, enum: [FULL, MASKED] }
+        applicationLogs: { type: string, const: METADATA_ONLY }
+        metricsLabels: { type: string, const: NO_CONTENT }
+        queuePayload: { type: string, enum: [REFERENCES_ONLY, REFERENCES_AND_METADATA] }
+        searchProjection: { type: string, enum: [ALLOWED_FIELDS, SCOPED, MINIMIZED_SCOPED, NO_RAW_VALUES] }
+        rawPersistence: { type: string, enum: [SOURCE_POLICY, MINIMIZED, DISABLED_BY_DEFAULT] }
+        export: { type: string, enum: [POLICY_REQUIRED, PERMISSION_REQUIRED, EXPLICIT_POLICY_REQUIRED, REDACTED_ONLY] }
+        workerRouting: { type: string, enum: [GENERAL, POLICY_DEPENDENT, RESTRICTED] }
+        retention: { type: string, enum: [SOURCE_POLICY, EXPLICIT, EXPLICIT_MINIMIZED] }
+        objectAccess: { type: string, enum: [SCOPED, SHORT_LIVED, SHORT_LIVED_STRICT_AUTH] }
+        crossCaseDisclosure: { type: string, enum: [POLICY_REQUIRED, EXPLICIT_PERMISSION, DENY_BY_DEFAULT] }
     CaseList:
       type: object
       additionalProperties: false

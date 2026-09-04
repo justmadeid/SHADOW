@@ -17,6 +17,7 @@ import {
 } from "../../../investigation/index.js";
 import { WorkspaceFacade } from "../../../workspace/index.js";
 import { CaseMembershipFacade } from "../../../governance/index.js";
+import { classificationHandling } from "../../../governance/index.js";
 import { PLATFORM_DB_CLIENT } from "../../../../platform/database/database.module.js";
 import { RequestContextStore } from "../../../../platform/request-context/index.js";
 import { AuthenticationGuard } from "../../../../platform/auth/authentication.guard.js";
@@ -142,6 +143,32 @@ describe("P1-006 Case authorization HTTP and persistence", () => {
       .set("if-match", '"999"')
       .send({ title: "Denied branch" })
       .expect(404);
+  });
+
+  it("returns server-derived handling metadata on Case responses and rejects client policy injection", async () => {
+    const f = await fixture();
+    const detail = await get(`/cases/${f.case.id}`, "owner").expect(200);
+    expect(detail.body.handling).toEqual(classificationHandling("SENSITIVE"));
+    let revision = 1;
+    for (const classification of ["PUBLIC", "INTERNAL", "RESTRICTED"] as const) {
+      const changed = await request(app.getHttpServer())
+        .patch(`/api/v1/cases/${f.case.id}`)
+        .set("authorization", "Bearer owner")
+        .set("if-match", `"${revision++}"`)
+        .send({ classification })
+        .expect(200);
+      expect(changed.body.handling).toEqual(classificationHandling(classification));
+    }
+    const page = await get(`/cases?workspaceId=${f.workspaceId}`, "owner").expect(200);
+    expect(page.body.items[0].handling).toEqual(classificationHandling("RESTRICTED"));
+    await request(app.getHttpServer())
+      .patch(`/api/v1/cases/${f.case.id}`)
+      .set("authorization", "Bearer owner")
+      .set("if-match", `"${revision}"`)
+      .send({ handling: { classification: "PUBLIC" } })
+      .expect(400);
+    const denied = await get(`/cases/${f.case.id}`, "peer").expect(404);
+    expect(denied.body).not.toHaveProperty("handling");
   });
 
   it("allows VIEWER reads but not writes; EDITOR cannot manage membership", async () => {

@@ -95,6 +95,9 @@ importers:
 
   apps/platform-api:
     dependencies:
+      '@intelligence/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@intelligence/auth':
         specifier: workspace:*
         version: link:../../packages/auth

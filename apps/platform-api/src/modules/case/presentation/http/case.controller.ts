@@ -12,6 +12,7 @@ import {
   Res,
 } from "@nestjs/common";
 import type { Response } from "express";
+import { classificationHandling } from "../../../governance/index.js";
 
 import { AppError } from "../../../../platform/errors/index.js";
 import { etagForRevision, parseIfMatchRevision } from "../../../../platform/http/etag.js";
@@ -240,6 +241,7 @@ function setCaseEtag(response: Response, revision: number): void {
 function serializeCase(value: Awaited<ReturnType<CaseFacade["get"]>>) {
   return {
     ...value,
+    handling: classificationHandling(value.classification),
     createdAt: value.createdAt.toISOString(),
     updatedAt: value.updatedAt.toISOString(),
     closedAt: value.closedAt?.toISOString() ?? null,

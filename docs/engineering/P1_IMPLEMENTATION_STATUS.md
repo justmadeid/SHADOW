@@ -14,7 +14,7 @@ Milestone: **M1 — Protected Case Shell**
 | `P1-004` Investigation domain | Complete; merged in PR #8 | Case-scoped Investigation branch/objective, lifecycle, idempotency, optimistic concurrency, Outbox events, migration, and API contract passed the real PR Quality Gate |
 | `P1-005` Governance permission model | Complete; tracked in PR #9 | Central `PolicyEnforcer`, explicit action/resource/context requests, user/service role grants, scoped PostgreSQL persistence, deny-by-default decisions, revocation, and confidentiality-safe enforcement are covered locally and submitted to the real PR Quality Gate |
 | `P1-006` Case membership policy | Implemented locally; user owns commit/PR; dependency audit pending registry availability | Explicit Case OWNER/EDITOR/VIEWER, protected Case/Investigation routes, membership-filtered pagination, transactional grant/revoke history and Outbox, legacy creator migration, and IDOR/concurrency coverage; see validation below |
-| `P1-007` Data classification primitive | Not started | Depends on P1-005 |
+| `P1-007` Data classification primitive | Implemented locally; user owns commit/PR; dependency audit pending registry availability | Shared classification vocabulary, versioned handling metadata, server display/export/source policy hooks, safe field presenter, no automatic derived downgrade, Case HTTP handling metadata, and negative-path tests; see validation below |
 | `P1-008` Critical audit baseline | Not started | Depends on P1-005 |
 | `P1-009` Platform shell auth/workspace/case context | Not started | Depends on backend Workspace, Case, and membership foundations |
 | `P1-010` Case CRUD UI in SHADOW | Not started | Depends on P1-004 and P1-009 |
@@ -286,3 +286,57 @@ independently run the production dependency audit.
   integration results must use the final rerun rather than skipped tests.
 - No commit, pull, push, PR, production migration, or deployment was performed.
   Changes remain local for the user's Git workflow and remote Quality Gate.
+
+## P1-007 implementation contract
+
+- Owner: Governance; canonical wire vocabulary in `@intelligence/contracts`.
+  Depends on P1-005; current Case access still uses the P1-006 boundary.
+- Shared PUBLIC/INTERNAL/SENSITIVE/RESTRICTED and FULL/MASKED/MATCH_ONLY/HIDDEN
+  enums are no longer duplicated in the Case domain.
+- `classificationHandling` provides policy-version-1 obligations for display,
+  logs, metrics, queue, search, raw persistence, export, routing, retention,
+  object access, and cross-Case disclosure. Metadata does not grant access.
+- `ClassificationPolicy` evaluates authenticated base access and additional
+  display/export/source permissions without product-name branching. Owners must
+  still resolve canonical scope and active Workspace/Case eligibility first.
+- Sensitive identifiers default to MASKED; use permission plus reason gives
+  MATCH_ONLY, while view permission plus reason can give FULL. Sensitive text
+  needs explicit server full-view policy and reason. Denied base access is HIDDEN.
+- The field presenter constructs minimal discriminated responses. MASKED is a
+  fixed placeholder; MATCH_ONLY omits values; HIDDEN omits values and match status.
+- Export requires policy, permission, and reason; sensitive export needs explicit
+  policy permission, and RESTRICTED cannot allow unredacted export. Source access
+  requires enabled source-use policy; restricted use additionally needs explicit
+  restricted permission/reason and restricted routing, with raw data disabled or
+  explicitly minimized. These are planning hooks, not source/export executors.
+- `deriveClassification` preserves the maximum input sensitivity and rejects
+  missing/invalid inputs or requested downgrade. Manual Case reclassification
+  remains its existing authorized, revision-checked metadata command.
+- Case responses now include server-derived `handling`; request bodies cannot
+  override it. No new HTTP endpoint, database migration, event, or network egress.
+- Sensitive display and source/export decisions report durable-audit obligations.
+  Actual audit execution remains P1-008; identifier/source/export/retention runtimes
+  remain their later domain slices. No new sensitive operation is exposed here.
+- Detailed decisions and limitations: [ADR-002](ADR-002_CLASSIFICATION_POLICY_HOOKS.md).
+
+## P1-007 validation evidence (2026-09-04)
+
+- Unit: 101 passed, including 35 classification/handling/policy tests. Tests cover
+  all classifications, invalid input, monotonic propagation, FULL/MASKED/MATCH_ONLY/
+  HIDDEN, use/view separation, reason requirements, source/export denial, and
+  identical SHADOW/ECHO/SPECTRA behavior.
+- PostgreSQL/HTTP integration: 43 passed, including persisted use/view grants,
+  revocation, Case/Workspace scope denial, additive Case handling metadata, and
+  rejection of client-supplied policy metadata. Existing P1-006 isolation remains.
+- Contract: 6 passed, including the shared enum, field-response discriminants,
+  and versioned handling shape. OpenAPI validates the new Case `handling` contract.
+- Static/build: architecture and dependency boundaries, formatting, lint,
+  typecheck, migration validation, and build passed. No SQL migration was changed.
+- Frozen offline pnpm installation passed. The lockfile change adds only the
+  existing local `@intelligence/contracts` link to platform-api; no third-party
+  package version was changed.
+- Playwright: 4 foundation E2E tests passed. Gitleaks found no secrets.
+- Production dependency audit remains **unverified**: the bounded audit attempt
+  returned `ERR_SOCKET_TIMEOUT` from the npm registry. Rerun when the registry is
+  reachable; the feature does not add or update any third-party dependency.
+- No commit, pull, push, PR, database migration, or deployment was performed.
