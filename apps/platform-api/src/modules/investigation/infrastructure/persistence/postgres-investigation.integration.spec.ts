@@ -2,6 +2,13 @@ import fs from "node:fs";
 import { sql } from "drizzle-orm";
 import { version as uuidVersion } from "uuid";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { Test, type TestingModule } from "@nestjs/testing";
+import {
+  GovernanceModule,
+  PolicyEnforcer,
+  CaseMembershipFacade,
+} from "../../../governance/index.js";
+import { PLATFORM_DB_CLIENT } from "../../../../platform/database/database.module.js";
 
 import {
   createDatabaseClient,
@@ -25,6 +32,7 @@ describe("Investigation persistence", () => {
   let caseA: Case;
   let caseB: Case;
   let closedCase: Case;
+  let governance: TestingModule;
 
   beforeAll(async () => {
     started = await startPostgresTestContainer();
@@ -47,6 +55,14 @@ describe("Investigation persistence", () => {
         import.meta.url,
       ),
       new URL("./migrations/0001_create_investigation.sql", import.meta.url),
+      new URL(
+        "../../../governance/infrastructure/persistence/migrations/0001_create_governance.sql",
+        import.meta.url,
+      ),
+      new URL(
+        "../../../governance/infrastructure/persistence/migrations/0002_case_membership.sql",
+        import.meta.url,
+      ),
     ]) {
       await client.db.execute(sql.raw(fs.readFileSync(migration, "utf8")));
     }
@@ -121,7 +137,28 @@ describe("Investigation persistence", () => {
         throw new Error("Not used by Investigation tests.");
       },
     };
-    const cases = new CaseFacade(caseRepository, transactions, context, workspaces);
+    governance = await Test.createTestingModule({ imports: [GovernanceModule] })
+      .overrideProvider(PLATFORM_DB_CLIENT)
+      .useValue(client)
+      .overrideProvider(RequestContextStore)
+      .useValue(context)
+      .compile();
+    const membership = governance.get(CaseMembershipFacade);
+    for (const parent of [caseA, caseB, closedCase]) {
+      await runAsUser(parent.id === caseB.id ? "user-b" : "user-a", () =>
+        transactions.run(() =>
+          membership.initializeNewCase(parent.workspaceId, parent.id),
+        ),
+      );
+    }
+    const cases = new CaseFacade(
+      caseRepository,
+      transactions,
+      context,
+      workspaces,
+      governance.get(PolicyEnforcer),
+      membership,
+    );
     const outbox = new PostgresOutboxStore(database, context);
     facade = new InvestigationFacade(
       new PostgresInvestigationRepository(database, outbox),
@@ -132,6 +169,7 @@ describe("Investigation persistence", () => {
   });
 
   afterAll(async () => {
+    await governance?.close();
     await client?.pool.end();
     await started?.container.stop();
   });

@@ -1,4 +1,4 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 
 import { DatabaseContext } from "@intelligence/database";
 import { AppError } from "../../../../platform/errors/index.js";
@@ -23,10 +23,10 @@ type CaseRow = {
   status: Case["status"];
   classification: Case["classification"];
   revision: number;
-  created_at: Date;
-  updated_at: Date;
-  closed_at: Date | null;
-  archived_at: Date | null;
+  created_at: string | Date;
+  updated_at: string | Date;
+  closed_at: string | Date | null;
+  archived_at: string | Date | null;
 };
 
 export class PostgresCaseRepository implements CaseRepository {
@@ -133,13 +133,19 @@ export class PostgresCaseRepository implements CaseRepository {
     };
   }
 
-  async listByWorkspace(workspaceId: string, limit: number): Promise<Case[]> {
+  async listByWorkspace(
+    workspaceId: string,
+    limit: number,
+    authorizedCaseIds: string[],
+  ): Promise<Case[]> {
+    if (authorizedCaseIds.length === 0) return [];
     const result = await this.database.connection().execute(sql`
       SELECT id, code, workspace_id, title, description, status, classification,
              revision, created_at, updated_at, closed_at, archived_at
       FROM cases
       WHERE workspace_id = ${workspaceId}
-      ORDER BY updated_at DESC, id DESC
+        AND ${inArray(cases.id, authorizedCaseIds)}
+      ORDER BY id DESC
       LIMIT ${Math.max(1, Math.min(100, Math.floor(limit)))}
     `);
     return (result.rows as CaseRow[]).map(mapCase);
@@ -281,10 +287,10 @@ function mapCase(row: CaseRow): Case {
     status: row.status,
     classification: row.classification,
     revision: row.revision,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    closedAt: row.closed_at,
-    archivedAt: row.archived_at,
+    createdAt: new Date(row.created_at),
+    updatedAt: new Date(row.updated_at),
+    closedAt: row.closed_at === null ? null : new Date(row.closed_at),
+    archivedAt: row.archived_at === null ? null : new Date(row.archived_at),
   };
 }
 

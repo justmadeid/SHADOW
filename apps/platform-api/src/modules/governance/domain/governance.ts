@@ -78,6 +78,8 @@ export type PolicyResource = {
 };
 
 export type PolicyContext = {
+  // Only trusted domain code supplies this flag after resolving canonical scope.
+  caseMembershipRequired?: boolean;
   caseId?: string;
   investigationId?: string;
   reasonForAccess?: string;
@@ -105,6 +107,7 @@ export type PolicyDecision = {
 };
 
 export type PermissionGrant = {
+  caseMembership?: boolean;
   roleId: string;
   permission: Permission;
   scope: GovernanceScope;

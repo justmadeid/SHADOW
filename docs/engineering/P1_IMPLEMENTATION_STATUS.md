@@ -13,7 +13,7 @@ Milestone: **M1 — Protected Case Shell**
 | `P1-003` Case domain | Complete; merged in PR #6 | UUIDv7 Case aggregate, opaque human-readable code, classification, lifecycle, optimistic concurrency, Outbox events, migration, and API contract passed the real PR and post-merge Quality Gates |
 | `P1-004` Investigation domain | Complete; merged in PR #8 | Case-scoped Investigation branch/objective, lifecycle, idempotency, optimistic concurrency, Outbox events, migration, and API contract passed the real PR Quality Gate |
 | `P1-005` Governance permission model | Complete; tracked in PR #9 | Central `PolicyEnforcer`, explicit action/resource/context requests, user/service role grants, scoped PostgreSQL persistence, deny-by-default decisions, revocation, and confidentiality-safe enforcement are covered locally and submitted to the real PR Quality Gate |
-| `P1-006` Case membership policy | Not started | Depends on P1-003 and P1-005 |
+| `P1-006` Case membership policy | Implemented locally; user owns commit/PR; dependency audit pending registry availability | Explicit Case OWNER/EDITOR/VIEWER, protected Case/Investigation routes, membership-filtered pagination, transactional grant/revoke history and Outbox, legacy creator migration, and IDOR/concurrency coverage; see validation below |
 | `P1-007` Data classification primitive | Not started | Depends on P1-005 |
 | `P1-008` Critical audit baseline | Not started | Depends on P1-005 |
 | `P1-009` Platform shell auth/workspace/case context | Not started | Depends on backend Workspace, Case, and membership foundations |
@@ -230,3 +230,59 @@ Validation totals after the Governance slice: 56 unit tests, 29 PostgreSQL/HTTP
 integration tests, 3 contract tests, and 4 Playwright E2E tests passed. The full
 local static/build gate and Gitleaks scan also passed; the PR Quality Gate will
 independently run the production dependency audit.
+
+## P1-006 implementation contract
+
+- Owners: Governance owns canonical membership and policy; Case owns access
+  orchestration; Workspace supplies active-member eligibility through its facade.
+- Canonical storage: typed Case-scoped Governance assignments, not a duplicated
+  Case membership table. `OWNER`, `EDITOR`, and `VIEWER` are explicit system roles.
+- Case creation atomically provisions the creator's OWNER membership. Replays
+  reauthorize and cannot revive revoked creators.
+- Case/Investigation reads require active Workspace membership and Case membership.
+  Writes also require the appropriate action permission. Workspace-wide or generic
+  resource grants cannot substitute for membership; denied detail access is safe 404.
+- Member grant/revoke application commands require Case-scoped administration
+  permission and a reason. Targets must be active Workspace members. Same-role
+  grant is idempotent, different-role grant conflicts, and revoke checks revision.
+- Per-Case transaction locking serializes membership changes with Case/Investigation
+  mutations and rechecks access after acquiring the lock. The last active Case
+  OWNER assignment cannot be removed, including concurrent removals.
+- Case lists filter authorized IDs before pagination, return at most 100 items,
+  and provide Workspace-bound opaque cursors. No totals disclose hidden Cases.
+- `CASE_MEMBERSHIP_CHANGED` v1 Outbox intent and append-only history commit together.
+  History records actor/reason; events contain only resource/history references,
+  action, and revision. Central audit delivery remains P1-008.
+- Additive migration `governance/0002_case_membership.sql` backfills OWNER only for
+  existing creators still active in the Workspace. Applied `0001` files are unchanged.
+- Public membership administration routes, recovery workflows, Workspace owner
+  removal coordination, and classification-specific hooks are not part of this slice.
+- ADR and rollout implications: [ADR-001](ADR-001_CASE_MEMBERSHIP.md).
+
+## P1-006 validation evidence (2026-09-04)
+
+- Unit: 66 passed, including explicit membership and role capability boundaries.
+- PostgreSQL/HTTP: 41 tests cover the complete integration suite, including 11
+  Case-access scenarios and legacy migration coverage. Negative paths include
+  same-Workspace nonmembers, cross-Case IDs, service principals, removed Workspace
+  members, broad grants, revoked replay, revision conflict, and cross-Case revoke.
+- Concurrency: last-owner preservation and queued Case/Investigation writes after
+  revocation are tested against PostgreSQL transactions.
+- Atomicity: forced membership-Outbox failure rolls back new Case/owner creation
+  and idempotency; runtime membership history/events exclude sensitive payloads.
+- HTTP success tests exposed raw-SQL timestamp strings in Case/Investigation
+  persistence; mapping now normalizes these to domain Dates before serialization.
+- Full static gate passed: architecture/dependency boundaries, formatting, lint,
+  typecheck, unit/contract tests, six migration files, OpenAPI lint, and build.
+- Contract: 3 tests passed. Case list pagination/security semantics are documented
+  in the field-complete OpenAPI contract; no new admin endpoint was introduced.
+- Playwright: 4 foundation E2E tests passed. Gitleaks: no secrets found.
+- Production dependency audit is **unverified**: a bounded retry returned
+  `ERR_SOCKET_TIMEOUT` from the npm registry audit endpoint. No dependency or
+  lockfile changes were made; rerun the audit when the registry is reachable.
+- Test startup initially stalled in Docker Desktop's credential helper. A
+  process-local anonymous `DOCKER_AUTH_CONFIG` allowed public test images without
+  modifying saved Docker credentials. One subsequent container startup timed out;
+  integration results must use the final rerun rather than skipped tests.
+- No commit, pull, push, PR, production migration, or deployment was performed.
+  Changes remain local for the user's Git workflow and remote Quality Gate.

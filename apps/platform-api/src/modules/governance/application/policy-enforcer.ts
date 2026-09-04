@@ -47,8 +47,11 @@ export class PolicyEnforcer {
       return this.deny(request, "DENY_PERMISSION_MISSING");
     }
 
-    const matching = grants.filter((grant) =>
-      scopeMatches(grant.scope, request.resource, request.context),
+    const matching = grants.filter(
+      (grant) =>
+        scopeMatches(grant.scope, request.resource, request.context) &&
+        (!request.context?.caseMembershipRequired ||
+          (grant.caseMembership === true && grant.scope.type === "CASE")),
     );
     if (matching.length === 0) {
       return this.deny(request, "DENY_SCOPE_MISMATCH");

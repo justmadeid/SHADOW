@@ -3,6 +3,14 @@ import { Inject, Injectable } from "@nestjs/common";
 
 import { DrizzleTransactionManager } from "@intelligence/database";
 import { WorkspaceFacade } from "../../workspace/index.js";
+import {
+  CaseMembershipFacade,
+  PolicyEnforcer,
+  type CaseRole,
+  type Permission,
+} from "../../governance/index.js";
+import { decodeCursor, encodeCursor } from "../../../platform/http/cursor.js";
+import { assertUuid } from "../../../platform/ids/uuid.js";
 import { AppError } from "../../../platform/errors/index.js";
 import { assertExpectedRevision } from "../../../platform/http/etag.js";
 import { RequestContextStore } from "../../../platform/request-context/index.js";
@@ -30,6 +38,8 @@ export class CaseFacade {
     private readonly requestContext: RequestContextStore,
     @Inject(WorkspaceFacade)
     private readonly workspaces: WorkspaceFacade,
+    @Inject(PolicyEnforcer) private readonly policy: PolicyEnforcer,
+    @Inject(CaseMembershipFacade) private readonly memberships: CaseMembershipFacade,
   ) {}
 
   async create(input: CreateCaseInput, idempotencyKey: string): Promise<Case> {
@@ -41,25 +51,70 @@ export class CaseFacade {
       .update(JSON.stringify(normalized))
       .digest("hex");
 
-    const result = await this.transactions.run(() =>
-      this.repository.create({
+    return this.transactions.run(async () => {
+      const result = await this.repository.create({
         ...normalized,
         actorUserId,
         idempotencyKey,
         requestHash,
-      }),
-    );
-
-    return result.case;
+      });
+      if (!result.replayed) {
+        await this.memberships.initializeNewCase(result.case.workspaceId, result.case.id);
+      }
+      // Replays must reauthorize, never restore a removed creator's membership.
+      return this.get(result.case.id);
+    });
   }
 
   async list(workspaceId: string): Promise<Case[]> {
-    this.requireUserId();
-    await this.workspaces.get(workspaceId);
-    return this.repository.listByWorkspace(workspaceId, 100);
+    return (await this.listPage(workspaceId)).items;
   }
 
-  async get(caseId: string): Promise<Case> {
+  async listPage(workspaceId: string, cursor?: string) {
+    this.requireUserId();
+    await this.workspaces.get(workspaceId);
+    let before: string | undefined;
+    if (cursor !== undefined) {
+      const payload = decodeCursor<unknown>(cursor);
+      if (
+        !payload ||
+        typeof payload !== "object" ||
+        !("workspaceId" in payload) ||
+        payload.workspaceId !== workspaceId ||
+        !("before" in payload) ||
+        typeof payload.before !== "string"
+      ) {
+        throw new AppError({
+          code: "VALIDATION_INVALID_CURSOR",
+          message: "The Case cursor is invalid.",
+          statusCode: 400,
+        });
+      }
+      try {
+        before = assertUuid(payload.before);
+      } catch {
+        throw new AppError({
+          code: "VALIDATION_INVALID_CURSOR",
+          message: "The Case cursor is invalid.",
+          statusCode: 400,
+        });
+      }
+    }
+    const ids = await this.memberships.listCaseIds(workspaceId, before);
+    const selected = ids.slice(0, 100);
+    return {
+      items: await this.repository.listByWorkspace(workspaceId, 100, selected),
+      page: {
+        hasMore: ids.length > 100,
+        nextCursor:
+          ids.length > 100
+            ? encodeCursor({ workspaceId, before: selected.at(-1)! })
+            : null,
+      },
+    };
+  }
+
+  async get(caseId: string, action: Permission = "CASE_VIEW"): Promise<Case> {
     this.requireUserId();
     const found = await this.repository.findById(caseId);
     if (!found) {
@@ -75,6 +130,8 @@ export class CaseFacade {
       throw error;
     }
 
+    await this.enforceCase(found, "CASE_VIEW");
+    if (action !== "CASE_VIEW") await this.enforceCase(found, action);
     return found;
   }
 
@@ -84,14 +141,13 @@ export class CaseFacade {
     expectedRevision: number,
   ): Promise<Case> {
     const actorUserId = this.requireUserId();
-    const current = await this.get(caseId);
-    assertExpectedRevision(expectedRevision, current.revision);
-    assertCaseMutable(current.status);
-    const changes = validateUpdateCaseInput(input);
+    return this.withAccess(caseId, "CASE_UPDATE", async (current) => {
+      assertExpectedRevision(expectedRevision, current.revision);
+      assertCaseMutable(current.status);
+      const changes = validateUpdateCaseInput(input);
 
-    return this.transactions.run(() =>
-      this.repository.update({ caseId, expectedRevision, actorUserId, changes }),
-    );
+      return this.repository.update({ caseId, expectedRevision, actorUserId, changes });
+    });
   }
 
   async transition(
@@ -100,18 +156,76 @@ export class CaseFacade {
     expectedRevision: number,
   ): Promise<Case> {
     const actorUserId = this.requireUserId();
-    const current = await this.get(caseId);
-    assertExpectedRevision(expectedRevision, current.revision);
-    const toStatus = nextCaseStatus(current.status, action);
+    return this.withAccess(caseId, "CASE_UPDATE", async (current) => {
+      assertExpectedRevision(expectedRevision, current.revision);
+      const toStatus = nextCaseStatus(current.status, action);
 
-    return this.transactions.run(() =>
-      this.repository.transition({
+      return this.repository.transition({
         caseId,
         expectedRevision,
         actorUserId,
         fromStatus: current.status,
         toStatus,
-      }),
+      });
+    });
+  }
+
+  async withAccess<T>(
+    caseId: string,
+    action: Permission,
+    work: (parent: Case) => Promise<T>,
+  ): Promise<T> {
+    this.requireUserId();
+    return this.transactions.run(async () => {
+      const found = await this.repository.findById(caseId);
+      if (!found) return this.caseNotFound();
+      await this.memberships.lockCase(found.workspaceId, found.id);
+      const current = await this.get(caseId, action);
+      return work(current);
+    });
+  }
+
+  async addMember(caseId: string, userId: string, role: CaseRole, reason: string) {
+    return this.withAccess(caseId, "GOVERNANCE_ROLE_MANAGE", async (parent) => {
+      if (!(await this.workspaces.hasMember(parent.workspaceId, userId)))
+        throw new AppError({
+          code: "CASE_MEMBER_NOT_ELIGIBLE",
+          message: "The user is not an active Workspace member.",
+          statusCode: 400,
+        });
+      return this.memberships.add(parent.workspaceId, parent.id, userId, role, reason);
+    });
+  }
+
+  async removeMember(
+    caseId: string,
+    membershipId: string,
+    expectedRevision: number,
+    reason: string,
+  ) {
+    return this.withAccess(caseId, "GOVERNANCE_ROLE_MANAGE", (parent) =>
+      this.memberships.remove(
+        parent.workspaceId,
+        parent.id,
+        membershipId,
+        expectedRevision,
+        reason,
+      ),
+    );
+  }
+
+  private enforceCase(value: Case, action: Permission) {
+    return this.policy.enforce(
+      {
+        action,
+        resource: { type: "CASE", id: value.id, workspaceId: value.workspaceId },
+        context: { caseId: value.id, caseMembershipRequired: true },
+      },
+      {
+        hideExistence: true,
+        notFoundCode: "CASE_NOT_FOUND",
+        notFoundMessage: "Case was not found.",
+      },
     );
   }
 

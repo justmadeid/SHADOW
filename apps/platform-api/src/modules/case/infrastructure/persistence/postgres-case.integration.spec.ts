@@ -2,6 +2,13 @@ import fs from "node:fs";
 import { sql } from "drizzle-orm";
 import { version as uuidVersion } from "uuid";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { Test, type TestingModule } from "@nestjs/testing";
+import {
+  GovernanceModule,
+  PolicyEnforcer,
+  CaseMembershipFacade,
+} from "../../../governance/index.js";
+import { PLATFORM_DB_CLIENT } from "../../../../platform/database/database.module.js";
 
 import {
   createDatabaseClient,
@@ -23,6 +30,7 @@ describe("Case persistence", () => {
   let cases: CaseFacade;
   let workspaces: WorkspaceFacade;
   let workspaceId: string;
+  let governance: TestingModule;
 
   beforeAll(async () => {
     started = await startPostgresTestContainer();
@@ -41,6 +49,14 @@ describe("Case persistence", () => {
         import.meta.url,
       ),
       new URL("./migrations/0001_create_case.sql", import.meta.url),
+      new URL(
+        "../../../governance/infrastructure/persistence/migrations/0001_create_governance.sql",
+        import.meta.url,
+      ),
+      new URL(
+        "../../../governance/infrastructure/persistence/migrations/0002_case_membership.sql",
+        import.meta.url,
+      ),
     ]) {
       await client.db.execute(sql.raw(fs.readFileSync(migration, "utf8")));
     }
@@ -80,15 +96,24 @@ describe("Case persistence", () => {
 
     const outbox = new PostgresOutboxStore(database, context);
     workspaces = new WorkspaceFacade(workspaceAccessRepository, transactions, context);
+    governance = await Test.createTestingModule({ imports: [GovernanceModule] })
+      .overrideProvider(PLATFORM_DB_CLIENT)
+      .useValue(client)
+      .overrideProvider(RequestContextStore)
+      .useValue(context)
+      .compile();
     cases = new CaseFacade(
       new PostgresCaseRepository(database, outbox),
       transactions,
       context,
       workspaces,
+      governance.get(PolicyEnforcer),
+      governance.get(CaseMembershipFacade),
     );
   });
 
   afterAll(async () => {
+    await governance?.close();
     await client?.pool.end();
     await started?.container.stop();
   });

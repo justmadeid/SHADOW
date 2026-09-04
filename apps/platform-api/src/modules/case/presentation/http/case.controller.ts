@@ -46,9 +46,13 @@ export class CaseController {
   }
 
   @Get()
-  async list(@Query("workspaceId") workspaceId: string | undefined) {
+  async list(
+    @Query("workspaceId") workspaceId: string | undefined,
+    @Query("cursor") cursor: string | undefined,
+  ) {
     const parsedWorkspaceId = parseResourceId(workspaceId, "Workspace");
-    return { items: (await this.cases.list(parsedWorkspaceId)).map(serializeCase) };
+    const result = await this.cases.listPage(parsedWorkspaceId, cursor);
+    return { ...result, items: result.items.map(serializeCase) };
   }
 
   @Get(":caseId")

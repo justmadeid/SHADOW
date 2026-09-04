@@ -63,6 +63,11 @@ export class WorkspaceFacade {
     return workspace;
   }
 
+  async hasMember(workspaceId: string, userId: string): Promise<boolean> {
+    await this.get(workspaceId);
+    return Boolean(await this.repository.findByIdForUser(workspaceId, userId));
+  }
+
   private requireUserId(): string {
     const principal = this.requestContext.get().principal;
     if (!principal || principal.kind !== "USER") {

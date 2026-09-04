@@ -8,13 +8,14 @@ import {
   RequestContextStore,
 } from "../../platform/request-context/index.js";
 import { WorkspaceModule } from "../workspace/index.js";
+import { GovernanceModule } from "../governance/index.js";
 import { CaseFacade } from "./application/case.facade.js";
 import { PostgresCaseRepository } from "./infrastructure/persistence/postgres-case.repository.js";
 import { CaseController } from "./presentation/http/case.controller.js";
 import { CASE_REPOSITORY } from "./case.tokens.js";
 
 @Module({
-  imports: [DatabaseModule, RequestContextModule, WorkspaceModule],
+  imports: [DatabaseModule, RequestContextModule, WorkspaceModule, GovernanceModule],
   controllers: [CaseController],
   providers: [
     {

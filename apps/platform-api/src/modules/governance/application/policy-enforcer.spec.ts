@@ -79,6 +79,51 @@ describe("PolicyEnforcer", () => {
     });
   });
 
+  it.each([
+    { type: "WORKSPACE" },
+    { type: "CASE", resourceId: caseA },
+    { type: "RESOURCE", resourceType: "CASE", resourceId: caseA },
+  ] satisfies GovernanceScope[])(
+    "requires typed membership instead of a generic $type grant",
+    async (scope) => {
+      const { enforcer, context } = setup([grant("generic-reader", "CASE_VIEW", scope)]);
+      await expect(
+        runAsUser(context, "analyst-a", () =>
+          enforcer.decide({
+            ...request("CASE_VIEW", caseA),
+            context: { caseId: caseA, caseMembershipRequired: true },
+          }),
+        ),
+      ).resolves.toMatchObject({ allowed: false });
+    },
+  );
+
+  it("accepts an exact typed membership but not another Case or a broad marked grant", async () => {
+    const { enforcer, context } = setup([
+      {
+        ...grant("member-reader", "CASE_VIEW", { type: "CASE", resourceId: caseA }),
+        caseMembership: true,
+      },
+      {
+        ...grant("broad-reader", "CASE_VIEW", { type: "WORKSPACE" }),
+        caseMembership: true,
+      },
+    ]);
+    for (const [caseId, allowed] of [
+      [caseA, true],
+      [caseB, false],
+    ] as const) {
+      await expect(
+        runAsUser(context, "analyst-a", () =>
+          enforcer.decide({
+            ...request("CASE_VIEW", caseId),
+            context: { caseId, caseMembershipRequired: true },
+          }),
+        ),
+      ).resolves.toMatchObject({ allowed });
+    }
+  });
+
   it("requires reason-for-access for restricted use and view actions", async () => {
     const { enforcer, context } = setup([
       grant("role-restricted", "IDENTIFIER_USE_RESTRICTED", {

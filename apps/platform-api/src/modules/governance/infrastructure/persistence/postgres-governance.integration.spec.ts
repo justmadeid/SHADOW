@@ -12,6 +12,7 @@ import { startPostgresTestContainer } from "@intelligence/testing";
 import { RequestContextStore } from "../../../../platform/request-context/index.js";
 import { PolicyEnforcer } from "../../application/policy-enforcer.js";
 import { PostgresGovernanceRepository } from "./postgres-governance.repository.js";
+import { CASE_ROLE_PERMISSIONS } from "../../domain/case-membership.js";
 
 describe("Governance persistence and enforcement", () => {
   let started: Awaited<ReturnType<typeof startPostgresTestContainer>>;
@@ -25,6 +26,8 @@ describe("Governance persistence and enforcement", () => {
   const workspaceB = "01992028-0000-7000-8000-000000000002";
   const caseA = "01992028-0000-7000-8000-000000000011";
   const caseB = "01992028-0000-7000-8000-000000000012";
+  const legacyWorkspace = "01992028-0000-7000-8000-000000000003";
+  const legacyCase = "01992028-0000-7000-8000-000000000013";
 
   beforeAll(async () => {
     started = await startPostgresTestContainer();
@@ -47,7 +50,38 @@ describe("Governance persistence and enforcement", () => {
       "utf8",
     );
     await client.db.execute(sql.raw(workspaceMigration));
+    await client.db.execute(
+      sql.raw(
+        fs.readFileSync(
+          new URL(
+            "../../../case/infrastructure/persistence/migrations/0001_create_case.sql",
+            import.meta.url,
+          ),
+          "utf8",
+        ),
+      ),
+    );
     await client.db.execute(sql.raw(governanceMigration));
+    await seedWorkspace(legacyWorkspace, "legacy");
+    await client.db.execute(sql`
+      INSERT INTO workspace_members (id, workspace_id, user_id, status, joined_at)
+      VALUES ('01992028-0000-7000-8000-000000000021', ${legacyWorkspace}, 'legacy-active', 'ACTIVE', now()),
+        ('01992028-0000-7000-8000-000000000022', ${legacyWorkspace}, 'legacy-gone', 'REMOVED', now());
+    `);
+    await client.db.execute(sql`
+      INSERT INTO cases (id, code, workspace_id, title, status, classification, revision, created_by_user_id, created_at, updated_at)
+      VALUES (${legacyCase}, 'CASE-2026-0000000013', ${legacyWorkspace}, 'Legacy active creator', 'DRAFT', 'SENSITIVE', 1, 'legacy-active', now(), now()),
+        ('01992028-0000-7000-8000-000000000014', 'CASE-2026-0000000014', ${legacyWorkspace}, 'Legacy removed creator', 'DRAFT', 'INTERNAL', 1, 'legacy-gone', now(), now()),
+        ('01992028-0000-7000-8000-000000000015', 'CASE-2026-0000000015', ${legacyWorkspace}, 'Legacy absent creator', 'DRAFT', 'INTERNAL', 1, 'legacy-absent', now(), now());
+    `);
+    await client.db.execute(
+      sql.raw(
+        fs.readFileSync(
+          new URL("./migrations/0002_case_membership.sql", import.meta.url),
+          "utf8",
+        ),
+      ),
+    );
     await seedWorkspace(workspaceA, "alpha");
     await seedWorkspace(workspaceB, "bravo");
   });
@@ -55,6 +89,55 @@ describe("Governance persistence and enforcement", () => {
   afterAll(async () => {
     await client?.pool.end();
     await started?.container.stop();
+  });
+
+  it("backfills only active legacy creators with UUIDv7 owner membership and durable history", async () => {
+    const members = await client.db
+      .execute(sql`SELECT a.id, a.subject_id, a.scope_resource_id, r.id AS role_id,
+      r.case_role, h.id AS history_id, h.reason, h.actor_subject_type
+      FROM governance_role_assignments a JOIN governance_roles r ON r.id = a.role_id
+      JOIN governance_assignment_history h ON h.assignment_id = a.id
+      WHERE a.workspace_id = ${legacyWorkspace} AND a.case_membership`);
+    expect(members.rows).toHaveLength(1);
+    const row = members.rows[0]!;
+    expect(row).toMatchObject({
+      subject_id: "legacy-active",
+      scope_resource_id: legacyCase,
+      case_role: "OWNER",
+      reason: "LEGACY_CASE_CREATOR_BOOTSTRAP",
+      actor_subject_type: "SERVICE",
+    });
+    for (const field of ["id", "role_id", "history_id"])
+      expect(uuidVersion(String(row[field]))).toBe(7);
+    const permissions = await client.db.execute(
+      sql`SELECT permission FROM governance_role_permissions WHERE role_id = ${row.role_id} ORDER BY permission`,
+    );
+    expect(permissions.rows.map((p) => p.permission)).toEqual(
+      [...CASE_ROLE_PERMISSIONS.OWNER].sort(),
+    );
+    await expect(
+      runAsUser("legacy-active", () =>
+        enforcer.decide({
+          action: "CASE_VIEW",
+          resource: { type: "CASE", id: legacyCase, workspaceId: legacyWorkspace },
+          context: { caseId: legacyCase, caseMembershipRequired: true },
+        }),
+      ),
+    ).resolves.toMatchObject({ allowed: true });
+    await expect(
+      transactions.run(() =>
+        repository.revokeAssignment({
+          assignmentId: String(row.id),
+          expectedRevision: 1,
+          revokedBySubjectType: "USER",
+          revokedBySubjectId: "legacy-active",
+        }),
+      ),
+    ).rejects.toMatchObject({ statusCode: 412 });
+    const active = await client.db.execute(
+      sql`SELECT status FROM governance_role_assignments WHERE id = ${row.id}`,
+    );
+    expect(active.rows[0]?.status).toBe("ACTIVE");
   });
 
   it("persists UUIDv7 roles, assignments, and append-only grant history", async () => {

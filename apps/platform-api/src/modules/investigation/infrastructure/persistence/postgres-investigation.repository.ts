@@ -202,10 +202,10 @@ type InvestigationRow = {
   objective: string;
   status: Investigation["status"];
   revision: number;
-  created_at: Date;
-  updated_at: Date;
-  completed_at: Date | null;
-  archived_at: Date | null;
+  created_at: string | Date;
+  updated_at: string | Date;
+  completed_at: string | Date | null;
+  archived_at: string | Date | null;
 };
 
 function mapRow(row: InvestigationRow): Investigation {
@@ -217,10 +217,10 @@ function mapRow(row: InvestigationRow): Investigation {
     objective: row.objective,
     status: row.status,
     revision: row.revision,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    completedAt: row.completed_at,
-    archivedAt: row.archived_at,
+    createdAt: new Date(row.created_at),
+    updatedAt: new Date(row.updated_at),
+    completedAt: row.completed_at === null ? null : new Date(row.completed_at),
+    archivedAt: row.archived_at === null ? null : new Date(row.archived_at),
   };
 }
 
