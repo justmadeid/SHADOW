@@ -15,6 +15,7 @@ import {
   type UpdateSubjectInput,
 } from "../domain/subject-repository.js";
 import { parseCreateSubject, parseUpdateSubject } from "../domain/subject-input.js";
+import { validateSubjectSeed } from "../domain/subject-seed.js";
 
 @Injectable()
 export class SubjectFacade {
@@ -31,6 +32,15 @@ export class SubjectFacade {
     parseIdempotencyKey(idempotencyKey, { required: true });
     return this.cases.withAccess(caseId, "SUBJECT_CREATE", async (parent) => {
       this.mutableParent(parent);
+      const seed = normalized.seed
+        ? {
+            fields: validateSubjectSeed(normalized.seed.fields, {
+              workspaceId: parent.workspaceId,
+              caseId,
+              subjectType: normalized.subjectType,
+            }),
+          }
+        : undefined;
       if (normalized.investigationId) {
         const investigation = await this.investigations.get(normalized.investigationId);
         if (
@@ -46,7 +56,17 @@ export class SubjectFacade {
           });
       }
       const requestHash = createHash("sha256")
-        .update(JSON.stringify({ caseId, ...normalized }))
+        // Seed values are deliberately excluded: a plain digest would create a
+        // guessable-value fingerprint. The repository compares replay fields.
+        .update(
+          JSON.stringify({
+            caseId,
+            subjectType: normalized.subjectType,
+            role: normalized.role,
+            investigationId: normalized.investigationId,
+            hasSeed: Boolean(seed),
+          }),
+        )
         .digest("hex");
       return this.repository.create({
         ...normalized,
@@ -55,8 +75,21 @@ export class SubjectFacade {
         actorUserId,
         idempotencyKey,
         requestHash,
+        ...(seed ? { seed } : {}),
       });
     });
+  }
+
+  async getSeed(subjectId: string) {
+    const subject = await this.get(subjectId);
+    const seed = await this.repository.findSeed(subject.id);
+    if (
+      !seed ||
+      seed.workspaceId !== subject.workspaceId ||
+      seed.caseId !== subject.caseId
+    )
+      return this.seedNotFound();
+    return seed;
   }
 
   async get(id: string) {
@@ -165,6 +198,14 @@ export class SubjectFacade {
     throw new AppError({
       code: "SUBJECT_NOT_FOUND",
       message: "Subject was not found.",
+      statusCode: 404,
+    });
+  }
+
+  private seedNotFound(): never {
+    throw new AppError({
+      code: "SUBJECT_SEED_NOT_FOUND",
+      message: "Subject seed was not found.",
       statusCode: 404,
     });
   }

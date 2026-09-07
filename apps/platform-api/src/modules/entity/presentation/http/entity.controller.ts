@@ -15,32 +15,35 @@ import { isResourceId } from "@intelligence/contracts";
 import { AppError } from "../../../../platform/errors/index.js";
 import { etagForRevision, parseIfMatchRevision } from "../../../../platform/http/etag.js";
 import { parseIdempotencyKey } from "../../../../platform/http/idempotency.js";
-import { SubjectFacade } from "../../application/subject.facade.js";
-import { presentClassifiedField } from "../../../governance/index.js";
-import { parseCreateSubject, parseUpdateSubject } from "../../domain/subject-input.js";
+import { EntityFacade } from "../../application/entity.facade.js";
+import { parseCreateEntity, parseUpdateEntity } from "../../domain/entity-input.js";
 
 @Controller("api/v1")
-export class SubjectController {
-  constructor(@Inject(SubjectFacade) private readonly subjects: SubjectFacade) {}
+export class EntityController {
+  constructor(@Inject(EntityFacade) private readonly entities: EntityFacade) {}
 
-  @Post("cases/:caseId/subjects")
+  @Post("workspaces/:workspaceId/entities")
   async create(
-    @Param("caseId") caseId: string,
+    @Param("workspaceId") workspaceId: string,
     @Body() body: unknown,
     @Headers("idempotency-key") key: string | undefined,
     @Res({ passthrough: true }) response: Response,
   ) {
-    const value = await this.subjects.create(
-      id(caseId),
-      parseCreateSubject(body),
+    const value = await this.entities.create(
+      id(workspaceId),
+      parseCreateEntity(body),
       parseIdempotencyKey(key, { required: true })!,
     );
-    response.status(201).setHeader("location", `/api/v1/subjects/${value.id}`);
+    response.status(201).setHeader("location", `/api/v1/entities/${value.id}`);
     response.setHeader("etag", etagForRevision(value.revision));
     return value;
   }
-  @Get("cases/:caseId/subjects")
-  list(@Param("caseId") caseId: string, @Query() query: Record<string, unknown>) {
+
+  @Get("workspaces/:workspaceId/entities")
+  list(
+    @Param("workspaceId") workspaceId: string,
+    @Query() query: Record<string, unknown>,
+  ) {
     if (
       Object.keys(query).some((key) => !["cursor", "limit"].includes(key)) ||
       (query.cursor !== undefined && typeof query.cursor !== "string") ||
@@ -48,51 +51,30 @@ export class SubjectController {
         (typeof query.limit !== "string" || !/^[1-9][0-9]{0,2}$/.test(query.limit)))
     )
       throw new AppError({
-        code: "VALIDATION_SUBJECT_QUERY_INVALID",
-        message: "Subject query is invalid.",
+        code: "VALIDATION_ENTITY_QUERY_INVALID",
+        message: "Entity query is invalid.",
         statusCode: 400,
       });
-    return this.subjects.list(
-      id(caseId),
+    return this.entities.list(
+      id(workspaceId),
       query.limit === undefined ? 50 : Number(query.limit),
       query.cursor as string | undefined,
     );
   }
-  @Get("subjects/:subjectId")
+
+  @Get("entities/:entityId")
   async get(
-    @Param("subjectId") subjectId: string,
+    @Param("entityId") entityId: string,
     @Res({ passthrough: true }) response: Response,
   ) {
-    const value = await this.subjects.get(id(subjectId));
+    const value = await this.entities.get(id(entityId));
     response.setHeader("etag", etagForRevision(value.revision));
     return value;
   }
-  @Get("subjects/:subjectId/seed")
-  async getSeed(@Param("subjectId") subjectId: string) {
-    const seed = await this.subjects.getSeed(id(subjectId));
-    return {
-      ...seed,
-      fields: seed.fields.map((field) => ({
-        id: field.id,
-        ordinal: field.ordinal,
-        name: field.name,
-        origin: field.origin,
-        classification: field.classification,
-        evidenceRef: field.evidenceRef ?? null,
-        sourceRecordRef: field.sourceRecordRef ?? null,
-        value: presentClassifiedField(
-          {
-            classification: field.classification,
-            visibility: field.classification === "SENSITIVE" ? "MASKED" : "FULL",
-          },
-          { value: field.value },
-        ),
-      })),
-    };
-  }
-  @Patch("subjects/:subjectId")
+
+  @Patch("entities/:entityId")
   async update(
-    @Param("subjectId") subjectId: string,
+    @Param("entityId") entityId: string,
     @Body() body: unknown,
     @Headers("if-match") header: string | undefined,
     @Res({ passthrough: true }) response: Response,
@@ -101,18 +83,19 @@ export class SubjectController {
     if (revision === undefined)
       throw new AppError({
         code: "VALIDATION_IF_MATCH_REQUIRED",
-        message: "If-Match is required for Subject mutations.",
+        message: "If-Match is required for Entity mutations.",
         statusCode: 400,
       });
-    const value = await this.subjects.update(
-      id(subjectId),
-      parseUpdateSubject(body),
+    const value = await this.entities.update(
+      id(entityId),
+      parseUpdateEntity(body),
       revision,
     );
     response.setHeader("etag", etagForRevision(value.revision));
     return value;
   }
 }
+
 function id(value: string): string {
   if (!isResourceId(value))
     throw new AppError({

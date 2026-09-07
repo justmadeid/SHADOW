@@ -33,6 +33,7 @@ function walk(dir, result = []) {
 const ownerOrder = [
   "/platform/events/outbox/",
   "/modules/workspace/",
+  "/modules/entity/",
   "/modules/case/",
   "/modules/investigation/",
   "/modules/subject/",

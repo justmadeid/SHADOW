@@ -42,7 +42,7 @@ const verifier: AccessTokenVerifier = {
 };
 const body = { subjectType: "PERSON", role: "PRIMARY_TARGET" };
 
-describe("P2-001 Subject HTTP and PostgreSQL", () => {
+describe("P2 Subject HTTP and PostgreSQL", () => {
   let started: Awaited<ReturnType<typeof startPostgresTestContainer>>;
   let client: ReturnType<typeof createDatabaseClient>;
   let app: INestApplication;
@@ -64,6 +64,7 @@ describe("P2-001 Subject HTTP and PostgreSQL", () => {
       "../../../governance/infrastructure/persistence/migrations/0002_case_membership.sql",
       "../../../governance/infrastructure/persistence/migrations/0003_subject_permissions.sql",
       "./migrations/0001_create_subject.sql",
+      "./migrations/0002_create_subject_seed.sql",
     ])
       await client.db.execute(
         sql.raw(fs.readFileSync(new URL(migration, import.meta.url), "utf8")),
@@ -125,6 +126,146 @@ describe("P2-001 Subject HTTP and PostgreSQL", () => {
     await create(f.id, key, { ...body, role: "WITNESS" }).expect(409);
   });
 
+  it("persists typed seed provenance and masks sensitive response values", async () => {
+    const f = await fixture();
+    const key = newUuid();
+    const seeded = {
+      ...body,
+      seed: {
+        fields: [
+          {
+            name: "DISPLAY_NAME",
+            value: "  Synthetic Person  ",
+            origin: "INVESTIGATOR_INPUT",
+            classification: "INTERNAL",
+          },
+          {
+            name: "USERNAME",
+            value: "synthetic_user",
+            origin: "INVESTIGATOR_INPUT",
+            classification: "SENSITIVE",
+          },
+        ],
+      },
+    };
+    const created = await create(f.id, key, seeded).expect(201);
+    expect(created.body.seed).toMatchObject({ fieldCount: 2 });
+    const seed = await get(`/subjects/${created.body.id}/seed`).expect(200);
+    expect(seed.body).toMatchObject({
+      id: created.body.seed.id,
+      subjectId: created.body.id,
+      workspaceId: f.workspaceId,
+      caseId: f.id,
+    });
+    expect(seed.body.fields[0]).toMatchObject({
+      ordinal: 0,
+      name: "DISPLAY_NAME",
+      origin: "INVESTIGATOR_INPUT",
+      classification: "INTERNAL",
+      evidenceRef: null,
+      sourceRecordRef: null,
+      value: {
+        visibility: "FULL",
+        displayValue: "Synthetic Person",
+        classification: "INTERNAL",
+      },
+    });
+    expect(seed.body.fields[1]).toMatchObject({
+      name: "USERNAME",
+      value: {
+        visibility: "MASKED",
+        displayValue: "••••",
+        classification: "SENSITIVE",
+      },
+    });
+    expect(JSON.stringify(seed.body)).not.toContain("synthetic_user");
+    const stored = await client.db.execute(
+      sql`SELECT value_text, classification FROM subject_seed_fields WHERE seed_id = ${created.body.seed.id} ORDER BY ordinal`,
+    );
+    expect(stored.rows).toEqual([
+      { value_text: "Synthetic Person", classification: "INTERNAL" },
+      { value_text: "synthetic_user", classification: "SENSITIVE" },
+    ]);
+    await expect(
+      client.db.execute(
+        sql`UPDATE subject_seed_fields SET value_text = 'mutated' WHERE seed_id = ${created.body.seed.id}`,
+      ),
+    ).rejects.toThrow();
+    await expect(
+      client.db.execute(
+        sql`DELETE FROM subject_seeds WHERE id = ${created.body.seed.id}`,
+      ),
+    ).rejects.toThrow();
+    const event = await client.db.execute(
+      sql`SELECT payload FROM platform_outbox_events WHERE aggregate_id = ${created.body.id}`,
+    );
+    expect(JSON.stringify(event.rows)).not.toContain("Synthetic Person");
+    expect(JSON.stringify(event.rows)).not.toContain("synthetic_user");
+
+    expect((await create(f.id, key, seeded).expect(201)).body.id).toBe(created.body.id);
+    await create(f.id, key, {
+      ...seeded,
+      seed: {
+        fields: [{ ...seeded.seed.fields[0], value: "Different Person" }],
+      },
+    }).expect(409);
+  });
+
+  it("rejects unverified provenance, incompatible fields and restricted storage", async () => {
+    const f = await fixture();
+    const seed = (field: object) => ({ ...body, seed: { fields: [field] } });
+    await create(
+      f.id,
+      newUuid(),
+      seed({
+        name: "DISPLAY_NAME",
+        value: "Synthetic",
+        origin: "EVIDENCE",
+        classification: "INTERNAL",
+        evidenceRef: {
+          type: "EVIDENCE",
+          id: newUuid(),
+          workspaceId: f.workspaceId,
+          caseId: f.id,
+        },
+      }),
+    ).expect(400);
+    await create(
+      f.id,
+      newUuid(),
+      seed({
+        name: "DISPLAY_NAME",
+        value: "Restricted synthetic value",
+        origin: "INVESTIGATOR_INPUT",
+        classification: "RESTRICTED",
+      }),
+    ).expect(409);
+    await create(f.id, newUuid(), {
+      subjectType: "DOMAIN",
+      role: "PRIMARY_TARGET",
+      seed: {
+        fields: [
+          {
+            name: "DISPLAY_NAME",
+            value: "Not a domain",
+            origin: "INVESTIGATOR_INPUT",
+            classification: "INTERNAL",
+          },
+        ],
+      },
+    }).expect(400);
+    await create(
+      f.id,
+      newUuid(),
+      seed({
+        name: "DISPLAY_NAME",
+        value: "x".repeat(301),
+        origin: "INVESTIGATOR_INPUT",
+        classification: "INTERNAL",
+      }),
+    ).expect(400);
+  });
+
   it("denies unauthenticated, service, cross-Workspace and same-Workspace nonmembers", async () => {
     const f = await fixture();
     const value = (await create(f.id).expect(201)).body;
@@ -134,6 +275,7 @@ describe("P2-001 Subject HTTP and PostgreSQL", () => {
       const denied = await get(`/subjects/${value.id}`, user).expect(404);
       const absent = await get(`/subjects/${newUuid()}`, user).expect(404);
       expect(denied.body.error.code).toBe(absent.body.error.code);
+      await get(`/subjects/${value.id}/seed`, user).expect(404);
       await get(`/cases/${f.id}/subjects`, user).expect(404);
       await create(f.id, newUuid(), body, user).expect(404);
       await patch(value.id, { role: "WITNESS" }, 1, user).expect(404);
@@ -293,12 +435,31 @@ describe("P2-001 Subject HTTP and PostgreSQL", () => {
       ),
     );
     try {
-      const failed = await create(f.id, key).expect(500);
+      const failed = await create(f.id, key, {
+        ...body,
+        seed: {
+          fields: [
+            {
+              name: "DISPLAY_NAME",
+              value: "Rollback Seed",
+              origin: "INVESTIGATOR_INPUT",
+              classification: "INTERNAL",
+            },
+          ],
+        },
+      }).expect(500);
       expect(JSON.stringify(failed.body)).not.toContain("synthetic-private");
       expect(
         (
           await client.db.execute(
             sql`SELECT id FROM investigation_subjects WHERE case_id = ${f.id}`,
+          )
+        ).rows,
+      ).toHaveLength(0);
+      expect(
+        (
+          await client.db.execute(
+            sql`SELECT id FROM subject_seeds WHERE case_id = ${f.id}`,
           )
         ).rows,
       ).toHaveLength(0);
@@ -316,7 +477,19 @@ describe("P2-001 Subject HTTP and PostgreSQL", () => {
         ),
       );
     }
-    await create(f.id, key).expect(201);
+    await create(f.id, key, {
+      ...body,
+      seed: {
+        fields: [
+          {
+            name: "DISPLAY_NAME",
+            value: "Rollback Seed",
+            origin: "INVESTIGATOR_INPUT",
+            classification: "INTERNAL",
+          },
+        ],
+      },
+    }).expect(201);
   });
 
   async function fixture() {

@@ -15,6 +15,39 @@ describe("Subject public contract", () => {
     expect(() =>
       parseCreateSubject({ subjectType: "PERSON", role: "WITNESS", seed: {} }),
     ).toThrow();
+    expect(
+      parseCreateSubject({
+        subjectType: "PERSON",
+        role: "WITNESS",
+        seed: {
+          fields: [
+            {
+              name: "DISPLAY_NAME",
+              value: "Synthetic Person",
+              origin: "INVESTIGATOR_INPUT",
+              classification: "INTERNAL",
+            },
+          ],
+        },
+      }).seed?.fields,
+    ).toHaveLength(1);
+    expect(() =>
+      parseCreateSubject({
+        subjectType: "PERSON",
+        role: "WITNESS",
+        seed: {
+          fields: [
+            {
+              name: "DISPLAY_NAME",
+              value: "Synthetic",
+              origin: "EVIDENCE",
+              classification: "INTERNAL",
+              evidenceRef: {},
+            },
+          ],
+        },
+      }),
+    ).toThrow();
   });
   it("exposes exactly role change OR archive, not arbitrary lifecycle or scope changes", () => {
     expect(parseUpdateSubject({ role: "WITNESS" })).toEqual({ role: "WITNESS" });
@@ -29,7 +62,7 @@ describe("Subject public contract", () => {
     ])
       expect(() => parseUpdateSubject(body)).toThrow();
   });
-  it("serializes reference-only metadata and UTC strings without seed or private actor data", () => {
+  it("serializes reference-only metadata without seed values or private actor data", () => {
     const value = createSubject(
       {
         id: "01900000-0000-7000-8000-000000000001",
@@ -50,6 +83,7 @@ describe("Subject public contract", () => {
         "role",
         "status",
         "entityRef",
+        "seed",
         "revision",
         "createdAt",
         "updatedAt",

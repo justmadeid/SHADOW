@@ -301,7 +301,7 @@ Backend, bukan frontend, menentukan field visibility.
 {
   "type": "NATIONAL_ID",
   "visibility": "MASKED",
-  "displayValue": "3374••••••••8291",
+  "displayValue": "••••",
   "classification": "RESTRICTED"
 }
 ```

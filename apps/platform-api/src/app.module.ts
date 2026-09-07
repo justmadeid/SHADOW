@@ -3,6 +3,7 @@ import { APP_FILTER } from "@nestjs/core";
 import type { Logger } from "pino";
 import { CaseModule } from "./modules/case/index.js";
 import { SubjectModule } from "./modules/subject/index.js";
+import { EntityModule } from "./modules/entity/index.js";
 import { GovernanceModule } from "./modules/governance/index.js";
 import { InvestigationModule } from "./modules/investigation/index.js";
 import { WorkspaceModule } from "./modules/workspace/index.js";
@@ -32,6 +33,7 @@ import { SystemController } from "./presentation/shared/system.controller.js";
     CaseModule,
     InvestigationModule,
     SubjectModule,
+    EntityModule,
   ],
   controllers: [SystemController],
   providers: [
