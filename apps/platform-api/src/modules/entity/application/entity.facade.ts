@@ -133,6 +133,7 @@ export class EntityFacade {
           workspaceId: entity.workspaceId,
           type: entity.type,
           status: "ACTIVE" as const,
+          revision: entity.revision,
         };
       if (entity.status !== "MERGED" || !entity.mergedInto) return null;
       id = entity.mergedInto.id;

@@ -50,7 +50,7 @@ describe("P2-005 Candidate", () => {
     expect(candidate).not.toHaveProperty("matchScore");
   });
 
-  it("rejects cross-scope, incompatible, duplicate, and restricted input", () => {
+  it("rejects cross-scope, incompatible, duplicate, and raw restricted input", () => {
     const base = {
       ...scope,
       id: newUuid(),
@@ -61,9 +61,15 @@ describe("P2-005 Candidate", () => {
       source: { origin: "INVESTIGATOR_INPUT" as const, resource: null },
     };
     expect(() => createCandidate({ ...base, type: "DOMAIN" }, now)).toThrow("compatible");
-    expect(() => createCandidate({ ...base, classification: "RESTRICTED" }, now)).toThrow(
-      "not available",
-    );
+    expect(() =>
+      createCandidate({ ...base, classification: "RESTRICTED" }, now),
+    ).toThrow();
+    expect(
+      createCandidate({ ...base, classification: "RESTRICTED", displayLabel: null }, now),
+    ).toMatchObject({
+      classification: "RESTRICTED",
+      displayLabel: "Restricted candidate",
+    });
     const ref = {
       type: "EVIDENCE" as const,
       id: newUuid(),

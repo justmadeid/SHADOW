@@ -41,6 +41,7 @@ export const RESOLUTION_REASON_CODES = [
   "NOT_SAME_IDENTITY",
   "MANUAL_REVIEW",
 ] as const;
+export const RESTRICTED_CANDIDATE_LABEL = "Restricted candidate";
 
 export type CandidateType = (typeof CANDIDATE_TYPES)[number];
 export type CandidateStatus = (typeof CANDIDATE_STATUSES)[number];
@@ -73,7 +74,7 @@ export type Candidate = Readonly<{
 
 export type CreateCandidateInput = {
   type: CandidateType;
-  displayLabel: string;
+  displayLabel: string | null;
   classification: DataClassification;
   source: CandidateSource;
   evidenceRefs?: readonly ResourceRef[];
@@ -117,15 +118,13 @@ export function createCandidate(
       statusCode: 409,
     });
   if (!DATA_CLASSIFICATIONS.includes(input.classification)) invalid();
-  // P2-006 owns policy-safe restricted matching signals. Until then, fail closed
-  // instead of persisting a label that this read model cannot safely present.
-  if (input.classification === "RESTRICTED")
-    throw new AppError({
-      code: "CANDIDATE_RESTRICTED_PRESENTATION_UNAVAILABLE",
-      message: "Restricted Candidate presentation is not available.",
-      statusCode: 409,
-    });
-  const displayLabel = normalizeLabel(input.displayLabel);
+  // Raw RESTRICTED labels are prohibited. A fixed non-identifying label keeps the
+  // Candidate reviewable through policy-safe signals without duplicating the value.
+  if (input.classification === "RESTRICTED" && input.displayLabel !== null) invalid();
+  const displayLabel =
+    input.classification === "RESTRICTED"
+      ? RESTRICTED_CANDIDATE_LABEL
+      : normalizeLabel(input.displayLabel);
   const source = validateSource(input.source, input.workspaceId, input.caseId);
   const evidenceRefs = validateEvidenceRefs(
     input.evidenceRefs ?? [],

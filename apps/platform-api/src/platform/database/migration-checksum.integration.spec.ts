@@ -57,12 +57,18 @@ describe("database migrations", () => {
     const caseDomain = migrated.stdout.indexOf("modules/case");
     const investigation = migrated.stdout.indexOf("modules/investigation");
     const governance = migrated.stdout.indexOf("modules/governance");
-    const resolution = migrated.stdout.indexOf("modules/resolution");
+    const resolution = migrated.stdout.indexOf(
+      "modules/resolution/infrastructure/persistence/migrations/0001_create_resolution.sql",
+    );
+    const matchingSignals = migrated.stdout.indexOf(
+      "modules/resolution/infrastructure/persistence/migrations/0002_create_matching_signals.sql",
+    );
     expect(workspace).toBeGreaterThanOrEqual(0);
     expect(caseDomain).toBeGreaterThan(workspace);
     expect(investigation).toBeGreaterThan(caseDomain);
     expect(governance).toBeGreaterThan(investigation);
     expect(resolution).toBeGreaterThan(governance);
+    expect(matchingSignals).toBeGreaterThan(resolution);
   });
 
   function runMigration(): ReturnType<typeof spawnSync> {

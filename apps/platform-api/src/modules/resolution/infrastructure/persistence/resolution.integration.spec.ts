@@ -11,6 +11,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import request from "supertest";
 import type { Logger } from "pino";
 import { CaseFacade } from "../../../case/index.js";
+import { EntityFacade } from "../../../entity/index.js";
 import { SubjectFacade } from "../../../subject/index.js";
 import { WorkspaceFacade } from "../../../workspace/index.js";
 import { PLATFORM_DB_CLIENT } from "../../../../platform/database/database.module.js";
@@ -22,6 +23,7 @@ import { RequestContextStore } from "../../../../platform/request-context/index.
 import type { InvestigationSubject } from "../../../subject/index.js";
 import { RESOLUTION_REPOSITORY } from "../../domain/resolution-repository.js";
 import type { ResolutionRepository } from "../../domain/resolution-repository.js";
+import { ResolutionMatchFacade } from "../../application/resolution-match.facade.js";
 import { ResolutionModule } from "../../resolution.module.js";
 
 const verifier: AccessTokenVerifier = {
@@ -45,7 +47,7 @@ const verifier: AccessTokenVerifier = {
   },
 };
 
-describe("P2-005 Resolution HTTP and PostgreSQL", () => {
+describe("P2-005/P2-006 Resolution HTTP and PostgreSQL", () => {
   let started: Awaited<ReturnType<typeof startPostgresTestContainer>>;
   let client: ReturnType<typeof createDatabaseClient>;
   let app: INestApplication;
@@ -54,7 +56,9 @@ describe("P2-005 Resolution HTTP and PostgreSQL", () => {
   let repository: ResolutionRepository;
   let workspaces: WorkspaceFacade;
   let cases: CaseFacade;
+  let entities: EntityFacade;
   let subjects: SubjectFacade;
+  let matches: ResolutionMatchFacade;
 
   beforeAll(async () => {
     started = await startPostgresTestContainer();
@@ -64,6 +68,7 @@ describe("P2-005 Resolution HTTP and PostgreSQL", () => {
       "../../../../platform/events/outbox/infrastructure/persistence/migrations/0001_create_platform_outbox.sql",
       "../../../workspace/infrastructure/persistence/migrations/0001_create_workspace.sql",
       "../../../entity/infrastructure/persistence/migrations/0001_create_entity_registry.sql",
+      "../../../entity/infrastructure/persistence/migrations/0002_create_secure_identifiers.sql",
       "../../../case/infrastructure/persistence/migrations/0001_create_case.sql",
       "../../../investigation/infrastructure/persistence/migrations/0001_create_investigation.sql",
       "../../../subject/infrastructure/persistence/migrations/0001_create_subject.sql",
@@ -72,6 +77,7 @@ describe("P2-005 Resolution HTTP and PostgreSQL", () => {
       "../../../governance/infrastructure/persistence/migrations/0002_case_membership.sql",
       "../../../governance/infrastructure/persistence/migrations/0003_subject_permissions.sql",
       "./migrations/0001_create_resolution.sql",
+      "./migrations/0002_create_matching_signals.sql",
     ])
       await client.db.execute(
         sql.raw(fs.readFileSync(new URL(migration, import.meta.url), "utf8")),
@@ -92,7 +98,9 @@ describe("P2-005 Resolution HTTP and PostgreSQL", () => {
     repository = module.get(RESOLUTION_REPOSITORY);
     workspaces = module.get(WorkspaceFacade);
     cases = module.get(CaseFacade);
+    entities = module.get(EntityFacade);
     subjects = module.get(SubjectFacade);
+    matches = module.get(ResolutionMatchFacade);
     app = module.createNestApplication();
     app.useGlobalFilters(
       new PlatformExceptionFilter(context, { error: vi.fn() } as unknown as Logger),
@@ -192,6 +200,186 @@ describe("P2-005 Resolution HTTP and PostgreSQL", () => {
     await expect(
       addCandidate(subject, session.id, key, { ...input, displayLabel: "Different" }),
     ).rejects.toMatchObject({ code: "CONFLICT_IDEMPOTENCY_KEY_REUSED" });
+  });
+
+  it("persists an idempotent explainable Entity match without restricted values", async () => {
+    const subject = await fixture();
+    const session = await createSession(subject);
+    const { candidate } = await addCandidate(subject, session.id);
+    const entity = await createEntity(subject.workspaceId, "PERSON");
+    const key = newUuid();
+    const input = {
+      candidateId: candidate.id,
+      entityId: entity.id,
+      matchLevel: "HIGH" as const,
+      signals: [
+        {
+          kind: "MATCHING" as const,
+          field: "NATIONAL_ID" as const,
+          result: "EXACT_MATCH" as const,
+          strength: "STRONG" as const,
+          classification: "RESTRICTED" as const,
+          valueVisibility: "MATCH_ONLY" as const,
+        },
+        {
+          kind: "CONFLICT" as const,
+          field: "DATE_OF_BIRTH" as const,
+          result: "CONFLICT" as const,
+          strength: "CONTRADICTING" as const,
+          classification: "SENSITIVE" as const,
+          valueVisibility: "HIDDEN" as const,
+        },
+      ],
+      producerType: "SERVICE" as const,
+      producerId: "synthetic-matcher",
+    };
+    const first = await asOwner(() => matches.record({ ...input, idempotencyKey: key }));
+    const replay = await asOwner(() => matches.record({ ...input, idempotencyKey: key }));
+    const sameSnapshot = await asOwner(() =>
+      matches.record({ ...input, idempotencyKey: newUuid() }),
+    );
+    expect(replay).toEqual(first);
+    expect(sameSnapshot.id).toBe(first.id);
+    expect(first).toMatchObject({
+      candidateId: candidate.id,
+      entityRef: { id: entity.id, workspaceId: subject.workspaceId },
+      matchLevel: "HIGH",
+      policyVersion: 1,
+      signals: [{ valueVisibility: "MATCH_ONLY" }],
+      conflicts: [{ valueVisibility: "HIDDEN" }],
+    });
+    expect(JSON.stringify(first)).not.toContain("displayValue");
+    expect(JSON.stringify(first)).not.toContain("fingerprint");
+    expect(await repository.listEntityMatches(session.id, 10)).toEqual([first]);
+    expect((await repository.findCandidate(candidate.id))?.status).toBe("PENDING_REVIEW");
+    expect(
+      (
+        await client.db.execute(
+          sql`SELECT id FROM entities WHERE workspace_id = ${subject.workspaceId}`,
+        )
+      ).rows,
+    ).toHaveLength(1);
+    const event = await client.db.execute(
+      sql`SELECT payload FROM platform_outbox_events WHERE aggregate_id = ${first.id}`,
+    );
+    expect(event.rows).toHaveLength(1);
+    expect(JSON.stringify(event.rows)).not.toContain("NATIONAL_ID");
+    expect(JSON.stringify(event.rows)).not.toContain(entity.id);
+  });
+
+  it("stores RESTRICTED Candidates only with a fixed non-identifying label", async () => {
+    const subject = await fixture();
+    const session = await createSession(subject);
+    const value = await addCandidate(subject, session.id, newUuid(), {
+      type: "PERSON",
+      displayLabel: null,
+      classification: "RESTRICTED",
+      source: { origin: "INVESTIGATOR_INPUT", resource: null },
+    });
+    expect(value.candidate.displayLabel).toBe("Restricted candidate");
+    expect(
+      (await get(`/candidates/${value.candidate.id}`).expect(200)).body,
+    ).toMatchObject({
+      classification: "RESTRICTED",
+      displayLabel: "Restricted candidate",
+    });
+    await expect(
+      client.db.execute(sql`UPDATE candidates SET display_label = 'Raw restricted value'
+        WHERE id = ${value.candidate.id}`),
+    ).rejects.toThrow();
+    await expect(
+      client.db.execute(sql`INSERT INTO candidates
+        (id, resolution_session_id, subject_id, workspace_id, case_id, candidate_type,
+         status, display_label, classification, source_origin, source_resource_type,
+         source_resource_id, revision, created_at, updated_at)
+        VALUES (${newUuid()}, ${session.id}, ${subject.id}, ${subject.workspaceId},
+          ${subject.caseId}, 'PERSON', 'PENDING_REVIEW', 'Raw restricted value',
+          'RESTRICTED', 'INVESTIGATOR_INPUT', NULL, NULL, 1, now(), now())`),
+    ).rejects.toThrow();
+  });
+
+  it("rejects incompatible match targets and rolls back match state on Outbox failure", async () => {
+    const subject = await fixture();
+    const session = await createSession(subject);
+    const { candidate } = await addCandidate(subject, session.id);
+    const incompatible = await createEntity(subject.workspaceId, "DOMAIN");
+    const valid = await createEntity(subject.workspaceId, "PERSON");
+    const signal = {
+      kind: "MATCHING" as const,
+      field: "NAME" as const,
+      result: "PARTIAL_MATCH" as const,
+      strength: "SUPPORTING" as const,
+      classification: "INTERNAL" as const,
+      valueVisibility: "FULL" as const,
+    };
+    await expect(
+      asOwner(() =>
+        matches.record({
+          candidateId: candidate.id,
+          entityId: incompatible.id,
+          matchLevel: "LOW",
+          signals: [signal],
+          producerType: "SERVICE",
+          producerId: "synthetic-matcher",
+          idempotencyKey: newUuid(),
+        }),
+      ),
+    ).rejects.toMatchObject({ code: "ENTITY_MATCH_TARGET_INVALID" });
+
+    const key = newUuid();
+    await client.db.execute(
+      sql.raw(
+        `CREATE FUNCTION fail_entity_match_event() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.event_type = 'ENTITY_MATCH_RECORDED' THEN RAISE EXCEPTION 'synthetic-private-failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER fail_entity_match_event BEFORE INSERT ON platform_outbox_events FOR EACH ROW EXECUTE FUNCTION fail_entity_match_event();`,
+      ),
+    );
+    const record = () =>
+      asOwner(() =>
+        matches.record({
+          candidateId: candidate.id,
+          entityId: valid.id,
+          matchLevel: "MEDIUM",
+          signals: [signal],
+          producerType: "SERVICE",
+          producerId: "synthetic-matcher",
+          idempotencyKey: key,
+        }),
+      );
+    try {
+      await expect(record()).rejects.toThrow();
+      expect(
+        (
+          await client.db.execute(
+            sql`SELECT id FROM resolution_entity_matches WHERE candidate_id = ${candidate.id}`,
+          )
+        ).rows,
+      ).toHaveLength(0);
+      expect(
+        (
+          await client.db.execute(
+            sql`SELECT entity_match_id FROM resolution_entity_match_idempotency
+              WHERE idempotency_key = ${key}`,
+          )
+        ).rows,
+      ).toHaveLength(0);
+    } finally {
+      await client.db.execute(
+        sql.raw(
+          "DROP TRIGGER fail_entity_match_event ON platform_outbox_events; DROP FUNCTION fail_entity_match_event();",
+        ),
+      );
+    }
+    const persisted = await record();
+    await expect(
+      client.db.execute(
+        sql`UPDATE resolution_entity_matches SET match_level = 'HIGH'
+          WHERE id = ${persisted.id}`,
+      ),
+    ).rejects.toThrow();
+    await expect(
+      client.db.execute(
+        sql`DELETE FROM resolution_match_signals WHERE entity_match_id = ${persisted.id}`,
+      ),
+    ).rejects.toThrow();
   });
 
   it("hides inaccessible sessions and Candidates and rechecks revoked membership", async () => {
@@ -391,6 +579,7 @@ describe("P2-005 Resolution HTTP and PostgreSQL", () => {
       sql`INSERT INTO workspace_members (id, workspace_id, user_id, status, joined_at)
         VALUES (${newUuid()}, ${workspace.id}, 'viewer', 'ACTIVE', now())`,
     );
+    await grantWorkspaceManage(workspace.id);
     const parent = await asOwner(() =>
       cases.create(
         {
@@ -465,6 +654,33 @@ describe("P2-005 Resolution HTTP and PostgreSQL", () => {
         }),
       ),
     );
+  }
+
+  function createEntity(workspaceId: string, type: "PERSON" | "DOMAIN") {
+    return asOwner(() =>
+      entities.create(
+        workspaceId,
+        { type, canonicalLabel: `Synthetic ${type} ${newUuid()}` },
+        newUuid(),
+      ),
+    );
+  }
+
+  async function grantWorkspaceManage(workspaceId: string) {
+    const roleId = newUuid();
+    await client.db.execute(sql`INSERT INTO governance_roles
+      (id, workspace_id, key, name, status, revision, created_at, updated_at)
+      VALUES (${roleId}, ${workspaceId}, 'RESOLUTION_OWNER',
+        'Resolution synthetic owner', 'ACTIVE', 1, now(), now())`);
+    for (const permission of ["WORKSPACE_VIEW", "WORKSPACE_MANAGE"])
+      await client.db.execute(sql`INSERT INTO governance_role_permissions
+        (role_id, permission) VALUES (${roleId}, ${permission})`);
+    await client.db.execute(sql`INSERT INTO governance_role_assignments
+      (id, workspace_id, role_id, subject_type, subject_id, scope_type,
+       scope_resource_type, scope_resource_id, status, revision,
+       granted_by_subject_type, granted_by_subject_id, granted_at, case_membership)
+      VALUES (${newUuid()}, ${workspaceId}, ${roleId}, 'USER', 'owner',
+        'WORKSPACE', null, null, 'ACTIVE', 1, 'USER', 'owner', now(), false)`);
   }
 
   function get(path: string, user = "owner") {
