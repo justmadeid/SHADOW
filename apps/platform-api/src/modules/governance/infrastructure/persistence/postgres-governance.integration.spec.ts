@@ -84,6 +84,14 @@ describe("Governance persistence and enforcement", () => {
         ),
       ),
     );
+    await client.db.execute(
+      sql.raw(
+        fs.readFileSync(
+          new URL("./migrations/0003_subject_permissions.sql", import.meta.url),
+          "utf8",
+        ),
+      ),
+    );
     await seedWorkspace(workspaceA, "alpha");
     await seedWorkspace(workspaceB, "bravo");
   });
