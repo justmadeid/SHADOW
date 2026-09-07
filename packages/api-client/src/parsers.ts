@@ -2,9 +2,11 @@ import {
   DATA_CLASSIFICATIONS,
   isResourceId,
   type CaseAccess,
+  type CaseDetail,
   type CaseSummary,
   type CasePage,
   type WorkspaceSummary,
+  type InvestigationSummary,
 } from "@intelligence/contracts";
 function invalid(): never {
   throw new Error("Invalid API response");
@@ -58,6 +60,25 @@ export function parseCase(value: unknown): CaseSummary {
     revision: r.revision,
   };
 }
+function instant(value: unknown): string {
+  const result = text(value, 40);
+  if (!Number.isFinite(Date.parse(result))) return invalid();
+  return result;
+}
+function nullableInstant(value: unknown): string | null {
+  return value === null ? null : instant(value);
+}
+export function parseCaseDetail(value: unknown): CaseDetail {
+  const r = record(value);
+  return {
+    ...parseCase(value),
+    description: r.description === null ? null : text(r.description, 4000),
+    createdAt: instant(r.createdAt),
+    updatedAt: instant(r.updatedAt),
+    closedAt: nullableInstant(r.closedAt),
+    archivedAt: nullableInstant(r.archivedAt),
+  };
+}
 export function parseCasePage(value: unknown): CasePage {
   const r = record(value);
   const page = record(r.page);
@@ -92,4 +113,32 @@ export function parseCaseAccess(value: unknown): CaseAccess {
       manageMembers: p.manageMembers as boolean,
     },
   };
+}
+export function parseInvestigation(value: unknown): InvestigationSummary {
+  const r = record(value);
+  if (
+    !["ACTIVE", "PAUSED", "COMPLETED", "ARCHIVED"].includes(String(r.status)) ||
+    typeof r.revision !== "number" ||
+    !Number.isSafeInteger(r.revision) ||
+    r.revision < 1
+  )
+    return invalid();
+  return {
+    id: id(r.id),
+    workspaceId: id(r.workspaceId),
+    caseId: id(r.caseId),
+    title: text(r.title, 200),
+    objective: text(r.objective, 2000),
+    status: r.status as InvestigationSummary["status"],
+    revision: r.revision,
+    createdAt: instant(r.createdAt),
+    updatedAt: instant(r.updatedAt),
+    completedAt: nullableInstant(r.completedAt),
+    archivedAt: nullableInstant(r.archivedAt),
+  };
+}
+export function parseInvestigations(value: unknown) {
+  const r = record(value);
+  if (!Array.isArray(r.items) || r.items.length > 100) return invalid();
+  return { items: r.items.map(parseInvestigation) };
 }

@@ -1,9 +1,4 @@
-import { ProductLanding } from "../../../shell/platform-shell";
+import { ShadowCaseWorkspace } from "../../../products/shadow/case-workspace";
 export default function Page() {
-  return (
-    <ProductLanding
-      product="SHADOW"
-      description="Discover and investigate within your authorized Case."
-    />
-  );
+  return <ShadowCaseWorkspace />;
 }

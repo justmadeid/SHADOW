@@ -4,21 +4,27 @@
 **Date:** 2026-09-04  
 **Owners:** Platform web shell; Authentication; Case/Governance
 
+> P1-010 extends the originally read-only BFF with a fixed Case/Investigation
+> mutation allowlist. That narrow extension and its CSRF/input controls are governed
+> by [ADR-005](ADR-005_SHADOW_CASE_COMMAND_UI.md); the generic-proxy prohibition here
+> remains unchanged.
+
 ## Context
 
 P1-002/P1-003/P1-006 provide canonical Workspace/Case membership and protected
 resource reads. The web application previously rendered unauthenticated foundation
 pages. P1-009 must share authenticated Workspace/Case context across SHADOW, ECHO
 and SPECTRA without duplicating domain state or sharing product-local interactions.
-Case creation/editing/Investigation commands remain P1-010.
+Case creation/editing/Investigation commands were assigned to P1-010.
 
 ## Decision
 
 The Next.js shell owns navigation and context presentation. PostgreSQL-backed
 Platform API remains the canonical source of truth; Governance determines
-permissions. The browser only calls a same-origin, read-only Backend-for-Frontend
-(BFF). There is no direct browser API token, client-side token store, generic proxy,
-worker credential, or duplicate domain database.
+permissions. P1-009 initially exposed a same-origin, read-only Backend-for-Frontend
+(BFF); ADR-005 adds only fixed Case/Investigation commands. There is no direct browser
+API token, client-side token store, generic proxy, worker credential, or duplicate
+domain database.
 
 ### Authentication
 
