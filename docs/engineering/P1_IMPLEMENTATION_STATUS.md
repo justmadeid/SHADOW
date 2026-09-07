@@ -17,7 +17,7 @@ Milestone: **M1 — Protected Case Shell**
 | `P1-007` Data classification primitive | Implemented locally; user owns Git/PR; current dependency audit passed in P1-008 | Shared classification vocabulary, versioned handling metadata, server display/export/source policy hooks, safe field presenter, no automatic derived downgrade, Case HTTP handling metadata, and negative-path tests; see validation below |
 | `P1-008` Critical audit baseline | Implemented and validated locally; user owns commit/PR | Separate append-only Audit, atomic membership/history/Outbox, rollback-only failures, and audited sensitive-access authorization; see ADR-003 and validation below |
 | `P1-009` Platform shell auth/workspace/case context | Implemented and validated locally; Auth0 live smoke pending; user owns Git/PR | Server-side OIDC session, guarded shared shell, canonical Workspace/Case navigation, scoped TanStack Query state, and backend-derived capabilities; see ADR-004 and validation below |
-| `P1-010` Case CRUD UI in SHADOW | Not started | Depends on P1-004 and P1-009 |
+| `P1-010` Case CRUD UI in SHADOW | Implemented and validated locally; user owns Git/PR | Authorized Case table/detail, create/edit/close/reopen/confirmed archive, Investigation list/create, strict mutation BFF, stale-write UX, and responsive SHADOW command surface; see ADR-005 and validation below |
 
 ## P1-001 implementation contract
 
@@ -450,4 +450,58 @@ independently run the production dependency audit.
   revocable session store; oversized encrypted cookies fail closed. Local sign-out
   does not invalidate a copied cookie before its expiry/backend token rejection.
 - No commit, pull, push, PR, user-database migration or deployment was performed.
-  Deploy the additive API reads before web. Case CRUD UI remains **P1-010**.
+  Deploy the additive API reads before web. Case CRUD UI is implemented separately
+  in **P1-010**.
+
+## P1-010 implementation contract
+
+- Owner: `platform-web/src/products/shadow`. Canonical Case/Investigation state,
+  lifecycle, membership, authorization, idempotency, revision, Audit and Outbox
+  behavior remain in their Platform API modules. Dependencies: P1-004 and P1-009.
+- SHADOW provides bounded Case discovery, open/detail, create, full metadata edit,
+  close/reopen, confirmed terminal archive, and bounded Investigation list/create.
+  Hard delete, Case membership UI, Investigation update/workbench, target/source
+  operations, and speculative IA filters/read models are not invented.
+- The shared shell exposes authorized Workspace/Case context but owns no SHADOW form
+  state. ECHO/SPECTRA do not import SHADOW internals. TanStack Query is the only
+  server-state cache; successful commands invalidate scoped canonical reads.
+- Same-origin BFF mutations have a fixed path/method allowlist, exact-Origin CSRF
+  check, 8192-byte JSON limit, exact writable-field validation, safe header
+  forwarding and generic errors. Unknown fields and arbitrary destinations fail
+  closed; browser tokens remain inaccessible to JavaScript.
+- Creates carry `Idempotency-Key`; metadata/lifecycle commands carry quoted
+  `If-Match`. Mutation retry is disabled. A 412 is visible and requires current-data
+  reload. Buttons follow API capabilities and Case lifecycle for usability, while
+  every backend operation reauthorizes independently.
+- Archive is the domain's history-preserving delete analogue. Closed and archived
+  Cases cannot edit metadata or create Investigation branches. Untrusted values are
+  rendered as text. No API/domain schema, SQL migration, event, source egress or new
+  critical Audit event was added.
+- Contracts and decisions: [web shell/BFF v1](../contracts/platform-web-shell-v1.md)
+  and [ADR-005](ADR-005_SHADOW_CASE_COMMAND_UI.md).
+
+## P1-010 validation evidence (2026-09-07)
+
+- Unit: **162 passed**, including strict detail/Investigation parsing, mutation
+  headers, path/body allowlists, mass-assignment denial, payload bounds,
+  idempotency-key and quoted-revision validation.
+- PostgreSQL/HTTP integration: **57 passed**. Existing real-backend suites continue
+  to prove Case/Investigation idempotency, authorization/isolation, lifecycle,
+  optimistic concurrency, atomic persistence, Audit and Outbox behavior.
+- Contract: **6 passed** and OpenAPI lint passed; P1-010 consumes the existing
+  canonical contracts without changing the public Platform API.
+- Playwright: **25 passed with retries disabled**, including Case create/open/edit/
+  close/reopen, confirmed archive, Investigation create, viewer controls, stale 412,
+  CSRF and mass-assignment rejection, session/revocation behavior, cross-product
+  context, untrusted text and responsive layout. An uncertain create-response retry
+  retains the same idempotency key; stale edits offer explicit reload/discard.
+- Desktop and 390px mobile SHADOW screenshots were visually inspected. The mobile
+  Case table becomes a compact row/card layout with no document overflow.
+- Full static quality gate passed: architecture/boundary/dependency checks,
+  formatting, lint, typecheck, unit/contract tests, migration validation, OpenAPI
+  lint and production builds. No dependency or lockfile change was introduced.
+- Security: production dependency audit reports no known vulnerabilities; Gitleaks
+  reports no leaks; `git diff --check` passed.
+- No commit, pull, push, PR, user-database migration or deployment was performed.
+  Existing API must precede the web build; rollback preserves user-created canonical
+  records. Live Auth0 smoke remains a separate P1-009 deployment gate.

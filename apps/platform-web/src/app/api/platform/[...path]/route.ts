@@ -1,13 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
-  parseCase,
   parseCaseAccess,
+  parseCaseDetail,
   parseCasePage,
+  parseInvestigation,
+  parseInvestigations,
   parseWorkspace,
   parseWorkspaces,
 } from "@intelligence/api-client";
 import { readSession, upstream, verifiedSession } from "../../../../shell/server/session";
-import { proxyPath } from "../../../../shell/server/proxy-path";
+import {
+  parseMutationInput,
+  readMutationBody,
+} from "../../../../shell/server/mutation-input";
+import { mutationPath, proxyPath } from "../../../../shell/server/proxy-path";
+import { webConfig } from "../../../../shell/server/config";
 
 const headers = {
   "cache-control": "private, no-store",
@@ -44,10 +51,62 @@ export async function GET(
           : parseWorkspace
         : segments.length === 1
           ? parseCasePage
-          : segments.length === 2
-            ? parseCase
-            : parseCaseAccess;
+          : segments[2] === "access"
+            ? parseCaseAccess
+            : segments[2] === "investigations"
+              ? parseInvestigations
+              : parseCaseDetail;
     return NextResponse.json(parse(await response.json()), { headers });
+  } catch {
+    return failure(503);
+  }
+}
+export async function POST(
+  request: NextRequest,
+  context: { params: Promise<{ path: string[] }> },
+) {
+  return mutate("POST", request, context);
+}
+export async function PATCH(
+  request: NextRequest,
+  context: { params: Promise<{ path: string[] }> },
+) {
+  return mutate("PATCH", request, context);
+}
+async function mutate(
+  method: "POST" | "PATCH",
+  request: NextRequest,
+  { params }: { params: Promise<{ path: string[] }> },
+) {
+  try {
+    const c = webConfig();
+    if (request.headers.get("origin") !== c.origin) return failure(403);
+    if (request.nextUrl.searchParams.size) return failure(404);
+    const { path: segments } = await params;
+    const kind = mutationPath(method, segments);
+    if (!kind) return failure(404);
+    const declared = Number(request.headers.get("content-length") ?? "0");
+    if (!Number.isFinite(declared) || declared > 8192) return failure(413);
+    const raw = await readMutationBody(request.body);
+    if (raw === null) return failure(413);
+    const input = parseMutationInput(kind, raw, request.headers);
+    if (!input) return failure(400);
+    const session = await readSession();
+    if (!session) return failure(401);
+    const path = `/${segments.join("/")}`;
+    const response = await upstream(path, session.token, { method, ...input });
+    if (!response.ok)
+      return failure(
+        [400, 401, 403, 404, 409, 412, 429].includes(response.status)
+          ? response.status
+          : 502,
+      );
+    return NextResponse.json(
+      kind === "CREATE_INVESTIGATION"
+        ? parseInvestigation(await response.json())
+        : parseCaseDetail(await response.json()),
+      { status: response.status, headers },
+    );
   } catch {
     return failure(503);
   }
@@ -56,7 +115,14 @@ function failure(status: number) {
   return NextResponse.json(
     {
       error: {
-        code: status === 401 ? "AUTH_SESSION_EXPIRED" : "PLATFORM_REQUEST_FAILED",
+        code:
+          status === 401
+            ? "AUTH_SESSION_EXPIRED"
+            : status === 412
+              ? "CONFLICT_REVISION_MISMATCH"
+              : status === 413
+                ? "VALIDATION_PAYLOAD_TOO_LARGE"
+                : "PLATFORM_REQUEST_FAILED",
         message: "The request could not be completed.",
       },
     },

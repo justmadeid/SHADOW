@@ -1,6 +1,7 @@
 # Platform web shell v1
 
-Owner: `platform-web/src/shell`. Scope: P1-009, not Case CRUD (P1-010).
+Owners: `platform-web/src/shell` (P1-009) and `platform-web/src/products/shadow`
+(P1-010 Case commands).
 
 ## Browser surfaces
 
@@ -11,15 +12,24 @@ Owner: `platform-web/src/shell`. Scope: P1-009, not Case CRUD (P1-010).
 | `GET /auth/login` | Create five-minute encrypted PKCE/state/nonce transaction; redirect to configured OIDC issuer |
 | `GET /auth/callback` | Verify transaction/token signatures and API user identity; set encrypted HttpOnly session; redirect to sanitized context |
 | `POST /auth/logout` | Require same Origin; expire session/login cookies and return 303 to login; GET does not sign out |
-| `/shadow`, `/echo`, `/spectra` | Protected shared shell, Workspace/Case selection and current permission summary |
+| `/shadow` | Protected Case table/detail, create/edit/lifecycle commands and Investigation creation |
+| `/echo`, `/spectra` | Protected shared shell and current permission summary; no SHADOW command state |
 | `GET /api/platform/session` | `{ user: { id }, expiresAt }`; never access/refresh/ID tokens |
 | `GET /api/platform/workspaces[/{id}]` | Current authorized Workspace list/detail; summary fields `id`, `name` only |
 | `GET /api/platform/cases?workspaceId=...&cursor=...` | Authorized bounded Case page |
-| `GET /api/platform/cases/{id}` | Case summary (`id`, `workspaceId`, `code`, `title`, `classification`, `status`, `revision`) |
+| `GET /api/platform/cases/{id}` | Validated Case detail, including mutable metadata and timestamps |
 | `GET /api/platform/cases/{id}/access` | Current Case capabilities from Governance |
+| `POST /api/platform/cases` | Create Case with exact body and browser-generated `Idempotency-Key` |
+| `PATCH /api/platform/cases/{id}` | Replace mutable Case metadata using quoted revision in `If-Match` |
+| `POST /api/platform/cases/{id}/actions/{close,reopen,archive}` | Explicit lifecycle command using `If-Match`; no request body |
+| `GET /api/platform/cases/{id}/investigations` | Bounded authorized Investigation list |
+| `POST /api/platform/cases/{id}/investigations` | Create Investigation with exact body and `Idempotency-Key` |
 
 The BFF is an allowlist, not another canonical API. Other paths, extra/duplicate
-query fields, arbitrary destinations and mutations are not forwarded. Session and
+query fields, arbitrary destinations and non-allowlisted mutations are not forwarded.
+Every mutation requires the exact configured Origin. Bodies are JSON, at most 8192
+bytes, and reject unknown fields; only safe idempotency/revision headers are forwarded.
+Session and
 read responses are private/no-store. Upstream failures return a generic error envelope
 with `AUTH_SESSION_EXPIRED` (401) or `PLATFORM_REQUEST_FAILED`; the typed client uses
 status to distinguish sign-in, denied context and temporary availability problems.
@@ -34,10 +44,11 @@ clears Case. Neither raw identifiers nor product-local view/filter state crosses
 the shared navigation contract. Active Case data is rendered only when its returned
 ID/Workspace and current access response agree with the selected context.
 
-`useCaseContext()` exposes authorized Workspace, Case summary and capabilities to
-product views inside the guard. It is not an API response store and must not hold
-product-local interaction state. Future mutations must still use canonical API
-commands; UI capabilities do not authorize writes or imply valid lifecycle actions.
+`useWorkspaceContext()` exposes the authorized Workspace and current bounded Case
+page; `useCaseContext()` additionally requires an authorized active Case. These are
+not duplicate stores and do not hold forms/dialog state. P1-010 keeps those
+interactions inside SHADOW. Mutations use canonical API commands; UI capabilities do
+not authorize writes or imply valid lifecycle actions.
 
 No Workspace/Case is selected automatically. Empty access lists are not errors;
 failed requests do not silently become empty lists. Existing Workspace list is
@@ -70,7 +81,8 @@ characters; oversized tokens fail closed. Review these limits before live rollou
 Deploy additive API `/session` and `/cases/{id}/access` first, then web. No database
 migration. Runtime config, keys, reverse-proxy callback log redaction, actual issuer
 availability, and live-login verification remain deployment responsibilities.
-Details: [ADR-004](../engineering/ADR-004_PROTECTED_PLATFORM_SHELL.md).
+Details: [ADR-004](../engineering/ADR-004_PROTECTED_PLATFORM_SHELL.md) and
+[ADR-005](../engineering/ADR-005_SHADOW_CASE_COMMAND_UI.md).
 
 ### Auth0 setup (selected provider)
 

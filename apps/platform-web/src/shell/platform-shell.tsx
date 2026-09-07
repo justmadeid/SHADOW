@@ -15,23 +15,31 @@ import {
   parseShellContext,
   productHref,
   type CaseAccess,
-  type CaseSummary,
+  type CaseDetail,
+  type CasePage,
   type Product,
   type ShellContext,
   type WorkspaceSummary,
 } from "@intelligence/contracts";
 
 const api = createApiClient({ baseUrl: "/api/platform" });
-type ActiveContext = {
+export type WorkspaceProductContext = {
   workspace: WorkspaceSummary;
-  case: CaseSummary;
-  access: CaseAccess;
+  cases: CasePage;
+  case: CaseDetail | null;
+  access: CaseAccess | null;
 };
-const Context = createContext<ActiveContext | null>(null);
-export function useCaseContext() {
+const Context = createContext<WorkspaceProductContext | null>(null);
+export function useWorkspaceContext() {
   const value = useContext(Context);
-  if (!value) throw new Error("An authorized Case context is required");
+  if (!value) throw new Error("An authorized Workspace context is required");
   return value;
+}
+export function useCaseContext() {
+  const value = useWorkspaceContext();
+  if (!value.case || !value.access)
+    throw new Error("An authorized Case context is required");
+  return { ...value, case: value.case, access: value.access };
 }
 
 export function PlatformShell({ children }: { children: React.ReactNode }) {
@@ -387,25 +395,17 @@ function CaseContext({
       ) : page.isPending ? (
         <Loading label="Loading authorized Cases…" />
       ) : !selected.caseId ? (
-        <section className="empty-state">
-          <p className="eyebrow">
-            {product} / {workspace.name}
-          </p>
-          <h1>
-            {page.data.items.length ? "Choose a Case to continue" : "No accessible Cases"}
-          </h1>
-          <p>
-            {page.data.items.length
-              ? "Your Case context stays with you across SHADOW, ECHO and SPECTRA."
-              : "Only authorized Cases appear here. Case creation arrives in P1-010."}
-          </p>
-        </section>
+        <Context.Provider
+          value={{ workspace, cases: page.data, case: null, access: null }}
+        >
+          {children}
+        </Context.Provider>
       ) : current.isError ? (
         <QueryFailure error={current.error} retry={() => void current.refetch()} />
       ) : current.isPending || !current.isFetchedAfterMount ? (
         <Loading label="Checking Case access…" />
       ) : (
-        <Context.Provider value={current.data}>
+        <Context.Provider value={{ ...current.data, cases: page.data }}>
           <section className="active-context" aria-label="Active Case">
             <div>
               <p className="eyebrow">ACTIVE CASE / {current.data.case.code}</p>
@@ -474,7 +474,26 @@ export function ProductLanding({
   product: Product;
   description: string;
 }) {
-  const context = useCaseContext();
+  const workspaceContext = useWorkspaceContext();
+  if (!workspaceContext.case || !workspaceContext.access)
+    return (
+      <section className="empty-state">
+        <p className="eyebrow">
+          {product} / {workspaceContext.workspace.name}
+        </p>
+        <h1>
+          {workspaceContext.cases.items.length
+            ? "Choose a Case to continue"
+            : "No accessible Cases"}
+        </h1>
+        <p>
+          {workspaceContext.cases.items.length
+            ? "Your Case context stays with you across SHADOW, ECHO and SPECTRA."
+            : "Only authorized Cases appear here."}
+        </p>
+      </section>
+    );
+  const context = { case: workspaceContext.case, access: workspaceContext.access };
   return (
     <section className="product-content">
       <p className="eyebrow">{product} / PROTECTED SHELL</p>

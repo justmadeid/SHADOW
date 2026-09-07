@@ -14,6 +14,26 @@ export type CaseSummary = {
   status: "DRAFT" | "ACTIVE" | "CLOSED" | "ARCHIVED";
   revision: number;
 };
+export type CaseDetail = CaseSummary & {
+  description: string | null;
+  createdAt: string;
+  updatedAt: string;
+  closedAt: string | null;
+  archivedAt: string | null;
+};
+export type InvestigationSummary = {
+  id: string;
+  workspaceId: string;
+  caseId: string;
+  title: string;
+  objective: string;
+  status: "ACTIVE" | "PAUSED" | "COMPLETED" | "ARCHIVED";
+  revision: number;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+  archivedAt: string | null;
+};
 export type CaseAccess = {
   workspaceId: string;
   caseId: string;
