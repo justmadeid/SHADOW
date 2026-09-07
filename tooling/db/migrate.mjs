@@ -35,6 +35,7 @@ const ownerOrder = [
   "/modules/workspace/",
   "/modules/case/",
   "/modules/investigation/",
+  "/modules/subject/",
   "/modules/governance/",
 ];
 

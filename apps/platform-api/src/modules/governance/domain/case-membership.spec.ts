@@ -7,7 +7,16 @@ import {
 
 describe("Case membership", () => {
   it("separates viewer, editor, and owner capabilities without granting identifier use", () => {
-    expect(CASE_ROLE_PERMISSIONS.VIEWER).toEqual(["CASE_VIEW", "INVESTIGATION_VIEW"]);
+    expect(CASE_ROLE_PERMISSIONS.VIEWER).toEqual([
+      "CASE_VIEW",
+      "INVESTIGATION_VIEW",
+      "SUBJECT_VIEW",
+    ]);
+    expect(CASE_ROLE_PERMISSIONS.EDITOR).toEqual(
+      expect.arrayContaining(["SUBJECT_CREATE", "SUBJECT_UPDATE", "SUBJECT_VIEW"]),
+    );
+    expect(CASE_ROLE_PERMISSIONS.VIEWER).not.toContain("SUBJECT_CREATE");
+    expect(CASE_ROLE_PERMISSIONS.VIEWER).not.toContain("SUBJECT_UPDATE");
     expect(CASE_ROLE_PERMISSIONS.EDITOR).toContain("CASE_UPDATE");
     expect(CASE_ROLE_PERMISSIONS.EDITOR).not.toContain("GOVERNANCE_ROLE_MANAGE");
     expect(CASE_ROLE_PERMISSIONS.OWNER).toContain("GOVERNANCE_ROLE_MANAGE");

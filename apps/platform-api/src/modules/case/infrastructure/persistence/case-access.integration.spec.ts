@@ -68,6 +68,7 @@ describe("P1-006 Case authorization HTTP and persistence", () => {
       "../../../investigation/infrastructure/persistence/migrations/0001_create_investigation.sql",
       "../../../governance/infrastructure/persistence/migrations/0001_create_governance.sql",
       "../../../governance/infrastructure/persistence/migrations/0002_case_membership.sql",
+      "../../../governance/infrastructure/persistence/migrations/0003_subject_permissions.sql",
     ])
       await client.db.execute(
         sql.raw(fs.readFileSync(new URL(migration, import.meta.url), "utf8")),

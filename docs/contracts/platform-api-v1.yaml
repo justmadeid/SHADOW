@@ -21,6 +21,125 @@ servers:
 security:
   - oidcAccessToken: []
 paths:
+  /cases/{caseId}/subjects:
+    parameters:
+      - $ref: "#/components/parameters/CaseId"
+    post:
+      operationId: createSubject
+      summary: Create an unresolved Case Subject
+      tags: [Subject]
+      description: >-
+        Active Workspace and Case OWNER/EDITOR membership required. Parent Case must
+        be DRAFT or ACTIVE. Optional Investigation must be ACTIVE in the same Case.
+        Entity linkage, seeds and resolution status are not writable. Replay returns
+        the current Subject after reauthorization; changed payload with the same key
+        conflicts. Creates Subject, revision history and Outbox in one transaction.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string, minLength: 8, maxLength: 200, pattern: '^[A-Za-z0-9._~:+/-]+$' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateSubject" }
+      responses:
+        "201":
+          description: Created or replayed Subject
+          headers:
+            ETag: { schema: { type: string } }
+            Location: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InvestigationSubject" }
+        "400": { $ref: "#/components/responses/SubjectError" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/UserPrincipalRequired" }
+        "404": { $ref: "#/components/responses/SubjectError" }
+        "409": { $ref: "#/components/responses/SubjectError" }
+        "500": { $ref: "#/components/responses/SubjectError" }
+    get:
+      operationId: listSubjects
+      summary: List authorized Subjects in a Case
+      tags: [Subject]
+      description: >-
+        OWNER/EDITOR/VIEWER access required. Includes archived Subjects. Ordered by
+        immutable UUIDv7 ID descending; cursor is bound to Workspace and Case and
+        never grants access. Unknown query fields are rejected.
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - name: cursor
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Bounded Subject page
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items, page]
+                properties:
+                  items:
+                    type: array
+                    maxItems: 100
+                    items: { $ref: "#/components/schemas/InvestigationSubject" }
+                  page:
+                    type: object
+                    additionalProperties: false
+                    required: [hasMore, nextCursor]
+                    properties:
+                      hasMore: { type: boolean }
+                      nextCursor: { type: [string, "null"] }
+        "400": { $ref: "#/components/responses/SubjectError" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/UserPrincipalRequired" }
+        "404": { $ref: "#/components/responses/SubjectError" }
+  /subjects/{subjectId}:
+    parameters:
+      - name: subjectId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getSubject
+      summary: Read a Case-scoped Subject
+      tags: [Subject]
+      description: Absent and forbidden Subjects return the same SUBJECT_NOT_FOUND response.
+      responses:
+        "200": { $ref: "#/components/responses/SubjectSuccess" }
+        "400": { $ref: "#/components/responses/SubjectError" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/UserPrincipalRequired" }
+        "404": { $ref: "#/components/responses/SubjectError" }
+    patch:
+      operationId: updateSubject
+      summary: Change Subject role or archive it
+      tags: [Subject]
+      description: >-
+        OWNER/EDITOR membership and mutable parent Case required. Exactly one of role
+        or status is accepted. ARCHIVED is terminal. Identity, type, scope, seeds and
+        resolution states cannot be changed through PATCH. No hard delete.
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateSubject" }
+      responses:
+        "200": { $ref: "#/components/responses/SubjectSuccess" }
+        "400": { $ref: "#/components/responses/SubjectError" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/UserPrincipalRequired" }
+        "404": { $ref: "#/components/responses/SubjectError" }
+        "409": { $ref: "#/components/responses/SubjectError" }
+        "412": { $ref: "#/components/responses/CaseRevisionMismatch" }
+        "500": { $ref: "#/components/responses/SubjectError" }
   /session:
     get:
       operationId: getUserSession
@@ -598,6 +717,18 @@ components:
       required: true
       schema: { type: string, format: uuid }
   responses:
+    SubjectSuccess:
+      description: Current Subject revision
+      headers:
+        ETag: { schema: { type: string } }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/InvestigationSubject" }
+    SubjectError:
+      description: Invalid input, undisclosed resource, lifecycle/idempotency conflict or sanitized persistence failure
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
     CaseMutationSuccess:
       description: Mutated Case
       headers:
@@ -653,6 +784,51 @@ components:
       bearerFormat: JWT
       description: OIDC access token validated against the configured issuer JWKS.
   schemas:
+    SubjectType:
+      type: string
+      enum: [PERSON, ORGANIZATION, SOCIAL_ACCOUNT, DOMAIN, UNKNOWN]
+    SubjectRole:
+      type: string
+      enum: [PRIMARY_TARGET, SECONDARY_TARGET, PERSON_OF_INTEREST, RELATED_PERSON, WITNESS, UNKNOWN]
+    CreateSubject:
+      type: object
+      additionalProperties: false
+      required: [subjectType, role]
+      properties:
+        subjectType: { $ref: "#/components/schemas/SubjectType" }
+        role: { $ref: "#/components/schemas/SubjectRole" }
+        investigationId: { type: [string, "null"], format: uuid }
+    UpdateSubject:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [role]
+          properties:
+            role: { $ref: "#/components/schemas/SubjectRole" }
+        - type: object
+          additionalProperties: false
+          required: [status]
+          properties:
+            status: { const: ARCHIVED }
+    InvestigationSubject:
+      type: object
+      additionalProperties: false
+      required: [id, workspaceId, caseId, investigationId, subjectType, role, status, entityRef, revision, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        workspaceId: { type: string, format: uuid }
+        caseId: { type: string, format: uuid }
+        investigationId: { type: [string, "null"], format: uuid }
+        subjectType: { $ref: "#/components/schemas/SubjectType" }
+        role: { $ref: "#/components/schemas/SubjectRole" }
+        status:
+          type: string
+          enum: [UNRESOLVED, ARCHIVED]
+          description: Resolution persistence is deferred to P2-003/P2-008.
+        entityRef: { type: "null" }
+        revision: { type: integer, minimum: 1 }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
     CreateWorkspaceRequest:
       type: object
       additionalProperties: false
