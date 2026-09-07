@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { newUuid } from "../../../platform/ids/uuid.js";
 import { createCandidate } from "./candidate.js";
-import { createEntityMatch, presentEntityMatch } from "./matching-signal.js";
+import {
+  createEntityMatch,
+  presentEntityMatch,
+  presentEntityMatchView,
+} from "./matching-signal.js";
 
 const scope = {
   resolutionSessionId: "01900000-0000-7000-8000-000000000001",
@@ -166,6 +170,61 @@ describe("P2-006 MatchingSignal and ConflictSignal", () => {
     const presented = presentEntityMatch(value, true);
     expect(presented?.signals).toHaveLength(1);
     expect(presented?.signals[0]?.field).toBe("NAME");
+  });
+
+  it("projects existence-only views and independently gates protected signals", () => {
+    const value = createEntityMatch(
+      {
+        id: newUuid(),
+        candidate: candidate(),
+        entity: {
+          id: newUuid(),
+          workspaceId: scope.workspaceId,
+          type: "PERSON",
+          revision: 1,
+        },
+        matchLevel: "HIGH",
+        signals: [
+          {
+            id: newUuid(),
+            kind: "MATCHING",
+            field: "NATIONAL_ID",
+            result: "EXACT_MATCH",
+            strength: "STRONG",
+            classification: "RESTRICTED",
+            valueVisibility: "MATCH_ONLY",
+          },
+          {
+            id: newUuid(),
+            kind: "MATCHING",
+            field: "NAME",
+            result: "PARTIAL_MATCH",
+            strength: "SUPPORTING",
+            classification: "INTERNAL",
+            valueVisibility: "FULL",
+          },
+        ],
+      },
+      now,
+    );
+    const existenceOnly = presentEntityMatchView(value, {
+      canDiscoverEntity: true,
+      canUseProtectedSignals: false,
+      canViewCrossCaseContext: false,
+    });
+    expect(existenceOnly).toMatchObject({
+      signals: [{ field: "NAME" }],
+      crossCaseContext: { exists: true, detailsVisible: false },
+    });
+    expect(existenceOnly?.signals[0]).not.toHaveProperty("classification");
+    expect(existenceOnly).not.toHaveProperty("workspaceId");
+    expect(
+      presentEntityMatchView(value, {
+        canDiscoverEntity: false,
+        canUseProtectedSignals: true,
+        canViewCrossCaseContext: true,
+      }),
+    ).toBeNull();
   });
 
   it("rejects cross-Workspace, incompatible Entity, and invalid signal semantics", () => {

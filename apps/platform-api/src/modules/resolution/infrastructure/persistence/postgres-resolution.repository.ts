@@ -331,6 +331,7 @@ export class PostgresResolutionRepository implements ResolutionRepository {
     resolutionSessionId: string,
     limit: number,
     before?: string,
+    includeProtected = true,
   ): Promise<EntityMatch[]> {
     const bound = Math.max(1, Math.min(101, Math.floor(limit)));
     const result = await this.database.connection().execute(sql`SELECT m.*,
@@ -344,6 +345,16 @@ export class PostgresResolutionRepository implements ResolutionRepository {
       LEFT JOIN resolution_match_signals s ON s.entity_match_id = m.id
       WHERE m.resolution_session_id = ${resolutionSessionId}
         ${before ? sql`AND m.id < ${before}::uuid` : sql``}
+        AND EXISTS (
+          SELECT 1 FROM resolution_match_signals visible
+          WHERE visible.entity_match_id = m.id
+            AND visible.value_visibility <> 'HIDDEN'
+            ${
+              includeProtected
+                ? sql``
+                : sql`AND visible.classification IN ('PUBLIC', 'INTERNAL')`
+            }
+        )
       GROUP BY m.id ORDER BY m.id DESC LIMIT ${bound}`);
     return (result.rows as EntityMatchRow[]).map(mapEntityMatch);
   }

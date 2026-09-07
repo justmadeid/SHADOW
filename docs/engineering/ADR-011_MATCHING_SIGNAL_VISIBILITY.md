@@ -56,8 +56,8 @@ generation.
 `ENTITY_MATCH_RECORDED` is metadata-only and intentionally excludes the Entity ID,
 signal field/result, classification, value visibility and all value material. Match
 generation is not a critical human action, so it does not create a critical Audit
-event. P2-007 must use durable audited access when policy-safe restricted matching is
-performed or disclosed.
+event. P2-007 uses durable audited access when policy-safe restricted matching is
+performed or disclosed, as recorded in ADR-012.
 
 The migration replaces a CHECK constraint with a strict classification superset and
 therefore carries the required safety marker. Apply it before the P2-006 API build;

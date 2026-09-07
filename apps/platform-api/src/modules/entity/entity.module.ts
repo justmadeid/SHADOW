@@ -1,6 +1,8 @@
 import { Module } from "@nestjs/common";
 import { DatabaseContext } from "@intelligence/database";
 import { DatabaseModule } from "../../platform/database/database.module.js";
+import { AuditModule } from "../audit/index.js";
+import { CaseModule } from "../case/index.js";
 import { PostgresOutboxStore } from "../../platform/events/outbox/infrastructure/persistence/postgres-outbox.store.js";
 import {
   RequestContextModule,
@@ -23,7 +25,14 @@ import { EntityController } from "./presentation/http/entity.controller.js";
 import { IdentifierController } from "./presentation/http/identifier.controller.js";
 
 @Module({
-  imports: [DatabaseModule, RequestContextModule, WorkspaceModule, GovernanceModule],
+  imports: [
+    DatabaseModule,
+    RequestContextModule,
+    WorkspaceModule,
+    GovernanceModule,
+    AuditModule,
+    CaseModule,
+  ],
   controllers: [EntityController, IdentifierController],
   providers: [
     {

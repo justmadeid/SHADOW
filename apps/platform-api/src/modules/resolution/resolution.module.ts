@@ -8,6 +8,8 @@ import {
 } from "../../platform/request-context/index.js";
 import { SubjectModule } from "../subject/index.js";
 import { EntityModule } from "../entity/index.js";
+import { AuditModule } from "../audit/index.js";
+import { GovernanceModule } from "../governance/index.js";
 import { ResolutionMatchFacade } from "./application/resolution-match.facade.js";
 import { ResolutionFacade } from "./application/resolution.facade.js";
 import { RESOLUTION_REPOSITORY } from "./domain/resolution-repository.js";
@@ -15,7 +17,14 @@ import { PostgresResolutionRepository } from "./infrastructure/persistence/postg
 import { ResolutionController } from "./presentation/http/resolution.controller.js";
 
 @Module({
-  imports: [DatabaseModule, RequestContextModule, SubjectModule, EntityModule],
+  imports: [
+    DatabaseModule,
+    RequestContextModule,
+    SubjectModule,
+    EntityModule,
+    GovernanceModule,
+    AuditModule,
+  ],
   controllers: [ResolutionController],
   providers: [
     {

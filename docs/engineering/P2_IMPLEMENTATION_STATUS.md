@@ -283,9 +283,9 @@ Implemented:
 
 ### Deferred integration
 
-P2-007 owns protected exact-Identifier comparison, governance-aware Workspace Entity
-query, `DISCOVER_ENTITY_EXISTENCE`, cross-Case disclosure and the paginated public
-`/resolutions/{resolutionId}/matches` endpoint. P2-008 remains the only owner of
+P2-007 now owns protected exact-Identifier comparison, governance-aware Workspace
+Entity query, `DISCOVER_ENTITY_EXISTENCE`, cross-Case disclosure and the paginated
+public `/resolutions/{resolutionId}/matches` endpoint. P2-008 remains the only owner of
 Candidate decisions and atomic Entity/Subject mutation.
 
 ## P2-006 validation (2026-09-08)
@@ -302,6 +302,53 @@ Candidate decisions and atomic Entity/Subject mutation.
 - Test fixtures use disposable PostgreSQL, synthetic identities and synthetic
   authentication. No user database migration or deployment was performed.
 
+## P2-007 — Workspace Entity match query implemented locally
+
+Owners: Resolution query/presentation and Entity Registry protected comparison. Scope
+and security decisions are recorded in
+[ADR-012](ADR-012_GOVERNANCE_AWARE_ENTITY_MATCH_QUERY.md).
+
+Implemented:
+
+- `GET /api/v1/resolutions/{resolutionId}/matches` with stable cursor pagination bound
+  to Resolution, Workspace and Case, default 50/max 100 and private no-store caching.
+- Current Subject access plus `DISCOVER_ENTITY_EXISTENCE` is required before match
+  rows are read. Missing Subject access remains undisclosed; missing discovery access
+  is denied without revealing whether matches exist.
+- Public views contain controlled explanations and Entity references but no Entity
+  labels, other Case data, values, fingerprints, classifications, scores or rationale.
+  `VIEW_CROSS_CASE_CONTEXT` exposes only a capability boolean, never Case details.
+- Protected signals are filtered before pagination and in the presenter. Complete
+  controlled-reason, audit-operation and `IDENTIFIER_USE_RESTRICTED` authorization is
+  required for MATCH_ONLY disclosure; revoked grants take effect on the next request.
+- Entity Registry exact-Identifier lookup uses the existing normalized,
+  domain-separated Workspace/type HMAC path. Raw inputs remain in memory and only safe
+  Entity metadata crosses the module facade.
+- Protected exact lookup and protected page disclosure produce durable
+  `SENSITIVE_FIELD_MATCH` audit events. Audit/Outbox failure blocks result release.
+- Bounded batch canonical Entity resolution avoids page-level N+1 queries. No schema
+  migration, mutation endpoint, queue payload or new domain event is introduced.
+
+### Deferred integration
+
+Automatic Candidate match generation remains a producer/runtime concern. P2-008 owns
+human decisions and atomic Subject/Entity changes; P2-009 owns the TargetProfileView
+composition and P2-010 owns SHADOW review UI.
+
+## P2-007 validation (2026-09-08)
+
+- Full m0:static passed: 210 unit tests, 18 contract tests, architecture (187 source
+  files), 6 boundary tests, dependency graph, formatting, lint, typecheck, validation
+  of 14 migrations, OpenAPI lint and all production builds.
+- Full PostgreSQL/HTTP integration passed 90 tests. The 12 Resolution scenarios cover
+  authorization ordering, Workspace/Case isolation, immediate permission revocation,
+  protected-signal filtering before pagination, controlled audit context, rollback on
+  audit failure, cursor scope and exact HMAC lookup without protected-data release.
+- Existing SHADOW/ECHO regression passed 25 Playwright tests. Production dependency
+  audit reports no known vulnerabilities and Gitleaks reports no leaks.
+- Test fixtures use disposable PostgreSQL, synthetic identities, identifiers and
+  authentication. No user database migration or deployment was performed.
+
 ## Deployment and rollback
 
 Review/apply migrations before deploying the API. Governance 0003 replaces a CHECK
@@ -314,4 +361,5 @@ by ADR-009. Apply the additive Resolution 0001 migration before deploying the P2
 API and retain its session, Candidate and history tables when rolling the API back. No
 destructive data rollback. Apply Resolution 0002 before the P2-006 build; it replaces
 the Candidate classification CHECK with a strict superset and adds immutable match
-snapshot tables. ADR-011 records the short table-lock and rollback constraints.
+snapshot tables. ADR-011 records the short table-lock and rollback constraints. P2-007
+adds no migration and can roll back with the API while retaining match/audit history.

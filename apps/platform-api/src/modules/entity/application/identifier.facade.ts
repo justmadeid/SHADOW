@@ -1,6 +1,8 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { DrizzleTransactionManager } from "@intelligence/database";
 import { isResourceId } from "@intelligence/contracts";
+import { AuditFacade } from "../../audit/index.js";
+import { CaseFacade } from "../../case/index.js";
 import { AuditedDataAccess, PolicyEnforcer } from "../../governance/index.js";
 import { AppError } from "../../../platform/errors/index.js";
 import { RequestContextStore } from "../../../platform/request-context/index.js";
@@ -10,7 +12,9 @@ import { EntityFacade } from "./entity.facade.js";
 import {
   maskedIdentifier,
   normalizeCreateIdentifier,
+  normalizeIdentifierValue,
   type CreateIdentifierInput,
+  type IdentifierType,
   type IdentifierView,
 } from "../domain/identifier.js";
 import {
@@ -33,6 +37,8 @@ export class IdentifierFacade {
     @Inject(EntityFacade) private readonly entities: EntityFacade,
     @Inject(PolicyEnforcer) private readonly policy: PolicyEnforcer,
     @Inject(AuditedDataAccess) private readonly audited: AuditedDataAccess,
+    @Inject(AuditFacade) private readonly audit: AuditFacade,
+    @Inject(CaseFacade) private readonly cases: CaseFacade,
     @Inject(DrizzleTransactionManager)
     private readonly transactions: DrizzleTransactionManager,
     @Inject(RequestContextStore) private readonly context: RequestContextStore,
@@ -123,6 +129,84 @@ export class IdentifierFacade {
           : { matchStatus: "UNKNOWN" },
     );
     return Object.freeze({ ...identifier, ...field });
+  }
+
+  /**
+   * Trusted P2-007 port. The protected input is normalized in memory, converted to
+   * a keyed Workspace fingerprint by the repository, and never returned or stored.
+   */
+  async matchExact(input: {
+    workspaceId: string;
+    caseId: string;
+    type: IdentifierType;
+    value: string;
+    reasonForAccess: string;
+    operationId: string;
+  }) {
+    if (!isResourceId(input.workspaceId) || !isResourceId(input.caseId))
+      throw new AppError({
+        code: "VALIDATION_INVALID_RESOURCE_ID",
+        message: "Resource ID must be a valid UUID.",
+        statusCode: 400,
+      });
+    const reason = parseReason(input.reasonForAccess);
+    if (!reason)
+      throw new AppError({
+        code: "VALIDATION_REASON_FOR_ACCESS_REQUIRED",
+        message: "A registered Identifier access reason is required.",
+        statusCode: 400,
+      });
+    if (!isResourceId(input.operationId))
+      throw new AppError({
+        code: "VALIDATION_AUDIT_OPERATION_ID_INVALID",
+        message: "Audit operation ID must be a valid UUID.",
+        statusCode: 400,
+      });
+    const normalizedValue = normalizeIdentifierValue(input.type, input.value);
+    return this.transactions.run(async () => {
+      const parent = await this.cases.get(input.caseId);
+      if (parent.workspaceId !== input.workspaceId)
+        throw new AppError({
+          code: "ACCESS_DENIED",
+          message: "The authenticated principal is not allowed to perform this action.",
+          statusCode: 403,
+        });
+      const resource = {
+        type: "WORKSPACE" as const,
+        id: input.workspaceId,
+        workspaceId: input.workspaceId,
+      };
+      await this.policy.enforce({
+        action: "DISCOVER_ENTITY_EXISTENCE",
+        resource,
+        context: { caseId: input.caseId },
+      });
+      await this.policy.enforce({
+        action: "IDENTIFIER_USE_RESTRICTED",
+        resource,
+        context: { caseId: input.caseId, reasonForAccess: reason },
+      });
+      const matches = await this.repository.findExactMatches({
+        workspaceId: input.workspaceId,
+        type: input.type,
+        normalizedValue,
+        limit: 2,
+      });
+      await this.audit.record({
+        operationId: input.operationId,
+        action: "SENSITIVE_FIELD_MATCH",
+        outcome: "AUTHORIZED",
+        classification: "RESTRICTED",
+        reason,
+        resource: {
+          type: "CASE",
+          id: input.caseId,
+          workspaceId: input.workspaceId,
+          caseId: input.caseId,
+        },
+      });
+      return Object.freeze(matches.map((match) => Object.freeze(match)));
+    });
   }
 
   private requireUser(): string {

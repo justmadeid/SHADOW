@@ -1,6 +1,7 @@
 export { EntityModule } from "./entity.module.js";
 export { EntityFacade } from "./application/entity.facade.js";
 export { IdentifierFacade } from "./application/identifier.facade.js";
+export { IDENTIFIER_ACCESS_REASONS } from "./application/identifier.facade.js";
 export {
   ENTITY_TYPES,
   ENTITY_STATUSES,
