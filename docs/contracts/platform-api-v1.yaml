@@ -14,7 +14,9 @@ info:
     these roles. Case handling metadata describes obligations, not an access grant.
     Export/source runtime enforcement remains a later slice. P2-004 identifier
     endpoints use encrypted storage, keyed comparison fingerprints, server-side
-    field visibility and durable audit before protected disclosure.
+    field visibility and durable audit before protected disclosure. P2-005 adds
+    read-only ResolutionSession/Candidate review resources; start and resolve commands
+    remain reserved for the P2-008 atomic coordinator.
   license:
     name: Proprietary
     identifier: LicenseRef-Proprietary
@@ -403,6 +405,95 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/UserPrincipalRequired" }
         "404": { $ref: "#/components/responses/SubjectError" }
+  /resolutions/{resolutionId}:
+    parameters:
+      - name: resolutionId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getResolutionSession
+      summary: Read an authorized Subject Resolution session
+      tags: [Resolution]
+      description: >-
+        Requires current SUBJECT_VIEW access to the containing Case. Absent and
+        inaccessible sessions return the same RESOLUTION_NOT_FOUND response. This
+        P2-005 read surface cannot start a session or perform a decision; atomic
+        Subject and Entity mutation remains P2-008.
+      responses:
+        "200": { $ref: "#/components/responses/ResolutionSuccess" }
+        "400": { $ref: "#/components/responses/ResolutionError" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/UserPrincipalRequired" }
+        "404": { $ref: "#/components/responses/ResolutionError" }
+  /resolutions/{resolutionId}/candidates:
+    parameters:
+      - name: resolutionId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: listResolutionCandidates
+      summary: List review Candidates for a Resolution session
+      tags: [Resolution]
+      description: >-
+        Requires current SUBJECT_VIEW access. Ordered by immutable UUIDv7 ID
+        descending. Cursor is bound to Resolution, Workspace and Case. Candidate
+        source references are provenance pointers, not access grants. Matching and
+        conflict signals are added by P2-006.
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - name: cursor
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Bounded Candidate page
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items, page]
+                properties:
+                  items:
+                    type: array
+                    maxItems: 100
+                    items: { $ref: "#/components/schemas/Candidate" }
+                  page:
+                    type: object
+                    additionalProperties: false
+                    required: [hasMore, nextCursor]
+                    properties:
+                      hasMore: { type: boolean }
+                      nextCursor: { type: [string, "null"] }
+        "400": { $ref: "#/components/responses/ResolutionError" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/UserPrincipalRequired" }
+        "404": { $ref: "#/components/responses/ResolutionError" }
+  /candidates/{candidateId}:
+    parameters:
+      - name: candidateId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getCandidate
+      summary: Read a non-canonical identity Candidate
+      tags: [Resolution]
+      description: >-
+        Requires current SUBJECT_VIEW access. Absent and inaccessible Candidates
+        share CANDIDATE_NOT_FOUND. Source/evidence references remain Case-scoped and
+        must be reauthorized when opened. RESTRICTED Candidate presentation fails
+        closed until P2-006. No Entity is created by this resource.
+      responses:
+        "200": { $ref: "#/components/responses/CandidateSuccess" }
+        "400": { $ref: "#/components/responses/ResolutionError" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/UserPrincipalRequired" }
+        "404": { $ref: "#/components/responses/ResolutionError" }
   /session:
     get:
       operationId: getUserSession
@@ -994,12 +1085,31 @@ components:
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Entity" }
+    ResolutionSuccess:
+      description: Current Resolution session revision
+      headers:
+        ETag: { schema: { type: string } }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ResolutionSession" }
+    CandidateSuccess:
+      description: Current Candidate revision
+      headers:
+        ETag: { schema: { type: string } }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Candidate" }
     EntityError:
       description: Invalid input, undisclosed resource, authorization/lifecycle/idempotency conflict or sanitized persistence failure
       content:
         application/json:
           schema: { $ref: "#/components/schemas/ErrorResponse" }
     SubjectError:
+      description: Invalid input, undisclosed resource, lifecycle/idempotency conflict or sanitized persistence failure
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+    ResolutionError:
       description: Invalid input, undisclosed resource, lifecycle/idempotency conflict or sanitized persistence failure
       content:
         application/json:
@@ -1306,6 +1416,71 @@ components:
           oneOf:
             - $ref: "#/components/schemas/SubjectSeedSummary"
             - type: "null"
+        revision: { type: integer, minimum: 1 }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    ResolutionSession:
+      type: object
+      additionalProperties: false
+      required: [id, subjectId, workspaceId, caseId, status, candidatesCount, selectedCandidateId, resolutionDecisionId, revision, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        subjectId: { type: string, format: uuid }
+        workspaceId: { type: string, format: uuid }
+        caseId: { type: string, format: uuid }
+        status: { type: string, enum: [SEARCHING, NEEDS_REVIEW, RESOLVED, CLOSED] }
+        candidatesCount: { type: integer, minimum: 0 }
+        selectedCandidateId: { type: [string, "null"], format: uuid }
+        resolutionDecisionId: { type: [string, "null"], format: uuid }
+        revision: { type: integer, minimum: 1 }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    CandidateResourceRef:
+      type: object
+      additionalProperties: false
+      required: [type, id, workspaceId, caseId]
+      properties:
+        type: { type: string, enum: [SOURCE_RECORD, EVIDENCE, RUN, ANALYSIS] }
+        id: { type: string, format: uuid }
+        workspaceId: { type: string, format: uuid }
+        caseId: { type: string, format: uuid }
+    CandidateSource:
+      type: object
+      additionalProperties: false
+      required: [origin, resource]
+      properties:
+        origin: { type: string, enum: [INVESTIGATOR_INPUT, SOURCE_RECORD, EVIDENCE, RUN, ANALYSIS_EXTRACTION, IMPORT] }
+        resource:
+          oneOf:
+            - $ref: "#/components/schemas/CandidateResourceRef"
+            - type: "null"
+    Candidate:
+      type: object
+      additionalProperties: false
+      required: [id, resolutionSessionId, subjectId, workspaceId, caseId, type, status, displayLabel, classification, source, evidenceRefs, revision, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        resolutionSessionId: { type: string, format: uuid }
+        subjectId: { type: string, format: uuid }
+        workspaceId: { type: string, format: uuid }
+        caseId: { type: string, format: uuid }
+        type: { type: string, enum: [PERSON, ORGANIZATION, SOCIAL_ACCOUNT, DOMAIN] }
+        status: { type: string, enum: [PENDING_REVIEW, RESOLVED, REJECTED, UNCERTAIN] }
+        displayLabel: { type: string, minLength: 1, maxLength: 200 }
+        classification:
+          type: string
+          enum: [PUBLIC, INTERNAL, SENSITIVE]
+          description: RESTRICTED presentation remains unavailable until P2-006 can return policy-safe signals.
+        source: { $ref: "#/components/schemas/CandidateSource" }
+        evidenceRefs:
+          type: array
+          maxItems: 20
+          items:
+            allOf:
+              - $ref: "#/components/schemas/CandidateResourceRef"
+              - type: object
+                properties:
+                  type: { const: EVIDENCE }
         revision: { type: integer, minimum: 1 }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }

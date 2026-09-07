@@ -57,10 +57,12 @@ describe("database migrations", () => {
     const caseDomain = migrated.stdout.indexOf("modules/case");
     const investigation = migrated.stdout.indexOf("modules/investigation");
     const governance = migrated.stdout.indexOf("modules/governance");
+    const resolution = migrated.stdout.indexOf("modules/resolution");
     expect(workspace).toBeGreaterThanOrEqual(0);
     expect(caseDomain).toBeGreaterThan(workspace);
     expect(investigation).toBeGreaterThan(caseDomain);
     expect(governance).toBeGreaterThan(investigation);
+    expect(resolution).toBeGreaterThan(governance);
   });
 
   function runMigration(): ReturnType<typeof spawnSync> {

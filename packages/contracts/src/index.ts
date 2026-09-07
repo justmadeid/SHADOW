@@ -5,6 +5,7 @@ export type ResourceType =
   | "SUBJECT"
   | "SOURCE_RECORD"
   | "CANDIDATE"
+  | "RESOLUTION"
   | "ENTITY"
   | "IDENTIFIER"
   | "CLAIM"

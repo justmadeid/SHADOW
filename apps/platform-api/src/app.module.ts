@@ -4,6 +4,7 @@ import type { Logger } from "pino";
 import { CaseModule } from "./modules/case/index.js";
 import { SubjectModule } from "./modules/subject/index.js";
 import { EntityModule } from "./modules/entity/index.js";
+import { ResolutionModule } from "./modules/resolution/index.js";
 import { GovernanceModule } from "./modules/governance/index.js";
 import { InvestigationModule } from "./modules/investigation/index.js";
 import { WorkspaceModule } from "./modules/workspace/index.js";
@@ -34,6 +35,7 @@ import { SystemController } from "./presentation/shared/system.controller.js";
     InvestigationModule,
     SubjectModule,
     EntityModule,
+    ResolutionModule,
   ],
   controllers: [SystemController],
   providers: [
