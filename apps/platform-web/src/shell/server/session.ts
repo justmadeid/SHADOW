@@ -25,14 +25,28 @@ export async function readSession() {
   );
 }
 
-export async function upstream(path: string, token: string) {
+export async function upstream(
+  path: string,
+  token: string,
+  init: {
+    method?: "POST" | "PATCH";
+    body?: string;
+    idempotencyKey?: string;
+    revision?: number;
+  } = {},
+) {
   const config = webConfig();
   return fetch(`${config.api}${path}`, {
     headers: {
       authorization: `Bearer ${token}`,
       accept: "application/json",
       "x-request-id": crypto.randomUUID(),
+      ...(init.body ? { "content-type": "application/json" } : {}),
+      ...(init.idempotencyKey ? { "idempotency-key": init.idempotencyKey } : {}),
+      ...(init.revision ? { "if-match": `"${init.revision}"` } : {}),
     },
+    method: init.method ?? "GET",
+    ...(init.body ? { body: init.body } : {}),
     cache: "no-store",
     redirect: "error",
     signal: AbortSignal.timeout(8000),

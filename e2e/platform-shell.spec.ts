@@ -68,14 +68,118 @@ test("Workspace switching clears Case context and stale data", async ({ page }) 
   await login(page);
   await page.getByLabel("Workspace", { exact: true }).selectOption(secondWorkspaceId);
   await expect(page).not.toHaveURL(/caseId=/);
+  await expect(page.getByRole("heading", { name: "SHADOW", exact: true })).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "Choose a Case to continue" }),
-  ).toBeVisible();
-  await expect(page.getByText("Synthetic investigation")).toHaveCount(0);
+    page.locator(".active-context").getByText("Synthetic investigation"),
+  ).toHaveCount(0);
 });
 test("viewer permissions come from the API", async ({ page }) => {
   await login(page, selectedUrl, "viewer");
+  await expect(page.getByRole("button", { name: "Edit metadata" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "New Investigation" })).toHaveCount(0);
+  await page.getByRole("link", { name: "ECHO", exact: true }).click();
   await expect(page.getByText("Not granted", { exact: true })).toHaveCount(3);
+});
+test("SHADOW creates, opens, edits, closes and reopens a Case", async ({ page }) => {
+  await login(page, `/shadow?workspaceId=${workspaceId}`);
+  await page.getByRole("button", { name: "New Case" }).click();
+  const create = page.getByRole("region", { name: "Create Case" });
+  await create.getByLabel("Title").fill("Operation Northstar");
+  await create.getByLabel("Description").fill("Synthetic lifecycle verification.");
+  await create.getByLabel("Classification").selectOption("SENSITIVE");
+  await create.getByRole("button", { name: "Create Case" }).click();
+  await expect(page.getByRole("heading", { name: "Operation Northstar" })).toBeVisible();
+  await expect(page).toHaveURL(/caseId=/);
+
+  await page.getByRole("button", { name: "Edit metadata" }).click();
+  const edit = page.getByRole("region", { name: "Edit Case metadata" });
+  await edit.getByLabel("Title").fill("Operation Northstar Updated");
+  await edit.getByRole("button", { name: "Save changes" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Operation Northstar Updated" }),
+  ).toBeVisible();
+
+  await page.getByRole("button", { name: "Close Case" }).click();
+  await page.getByRole("button", { name: "Confirm close" }).click();
+  await expect(
+    page.locator(".active-context .badge").filter({ hasText: "CLOSED" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Reopen Case" }).click();
+  await expect(
+    page.locator(".active-context .badge").filter({ hasText: "ACTIVE" }),
+  ).toBeVisible();
+});
+test("SHADOW creates an Investigation only inside an active authorized Case", async ({
+  page,
+}) => {
+  await login(page);
+  await expect(page.getByText("Initial assessment", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "New Investigation" }).click();
+  const form = page.getByRole("region", { name: "Create Investigation" });
+  await form.getByLabel("Title").fill("Network hypothesis");
+  await form.getByLabel("Objective").fill("Map the synthetic relationship network.");
+  await form.getByRole("button", { name: "Create Investigation" }).click();
+  await expect(page.getByText("Network hypothesis", { exact: true })).toBeVisible();
+});
+test("SHADOW confirms terminal archive and removes mutation controls", async ({
+  page,
+}) => {
+  await login(page);
+  await page.getByRole("button", { name: "Archive Case" }).click();
+  await expect(page.getByRole("alertdialog")).toContainText("terminal");
+  await page.getByRole("button", { name: "Confirm archive" }).click();
+  await expect(
+    page.locator(".active-context .badge").filter({ hasText: "ARCHIVED" }),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Edit metadata" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "New Investigation" })).toHaveCount(0);
+});
+test("Case creation retries an uncertain response with the same idempotency key", async ({
+  page,
+}) => {
+  await login(page);
+  const keys: string[] = [];
+  await page.route("**/api/platform/cases", async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    keys.push(route.request().headers()["idempotency-key"]!);
+    const response = await route.fetch();
+    if (keys.length === 1)
+      return route.fulfill({ status: 503, json: { error: { message: "Unavailable" } } });
+    return route.fulfill({ response });
+  });
+  await page.getByRole("button", { name: "New Case", exact: true }).click();
+  const form = page.getByRole("region", { name: "Create Case", exact: true });
+  await form.getByLabel("Title").fill("Retry synthetic Case");
+  await form.getByRole("button", { name: "Create Case", exact: true }).click();
+  await expect(form.getByRole("alert")).toBeVisible();
+  await form.getByRole("button", { name: "Create Case", exact: true }).click();
+  await expect(form).toHaveCount(0);
+  expect(keys).toHaveLength(2);
+  expect(keys[0]).toBe(keys[1]);
+  await expect(
+    page.getByRole("heading", { name: "Retry synthetic Case", exact: true }),
+  ).toBeVisible();
+});
+
+test("stale Case revisions fail visibly and force a current-data reload", async ({
+  page,
+}) => {
+  await login(page);
+  await control(page, "stale");
+  await page.getByRole("button", { name: "Edit metadata" }).click();
+  const edit = page.getByRole("region", { name: "Edit Case metadata" });
+  await edit.getByLabel("Title").fill("Stale write must fail");
+  await edit.getByRole("button", { name: "Save changes" }).click();
+  await expect(
+    page.getByRole("alert").filter({ hasText: "changed elsewhere" }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Reload current version (discard draft)" })
+    .click();
+  await expect(edit).toHaveCount(0);
+  await expect(
+    page.getByRole("heading", { name: "Synthetic investigation" }),
+  ).toBeVisible();
 });
 test("empty Workspace and Case lists have distinct non-error states", async ({
   page,
@@ -187,7 +291,13 @@ test("BFF rejects write methods, arbitrary proxy paths and cross-origin logout",
   page,
 }) => {
   await login(page);
-  expect((await page.request.post(`/api/platform/cases/${caseId}`)).status()).toBe(405);
+  expect(
+    (
+      await page.request.post(`/api/platform/cases/${caseId}`, {
+        headers: { origin: "http://127.0.0.1:3000" },
+      })
+    ).status(),
+  ).toBe(404);
   expect((await page.request.get("/api/platform/internal/v1/runs")).status()).toBe(404);
   expect(
     (
@@ -197,6 +307,40 @@ test("BFF rejects write methods, arbitrary proxy paths and cross-origin logout",
     ).status(),
   ).toBe(403);
   expect((await page.request.get("/api/platform/session")).status()).toBe(200);
+  expect(
+    (
+      await page.request.patch(`/api/platform/cases/${caseId}`, {
+        headers: {
+          origin: "http://127.0.0.1:3000",
+          "content-type": "application/json",
+          "if-match": '"1"',
+        },
+        data: {
+          title: "Synthetic investigation",
+          description: null,
+          classification: "INTERNAL",
+          role: "OWNER",
+        },
+      })
+    ).status(),
+  ).toBe(400);
+  expect(
+    (
+      await page.request.post("/api/platform/cases", {
+        headers: {
+          origin: "https://foreign.example.test",
+          "content-type": "application/json",
+          "idempotency-key": "synthetic-key-1",
+        },
+        data: {
+          workspaceId,
+          title: "Cross-origin Case",
+          description: null,
+          classification: "INTERNAL",
+        },
+      })
+    ).status(),
+  ).toBe(403);
 });
 
 test("sign-out in one tab clears protected content in another tab", async ({ page }) => {
