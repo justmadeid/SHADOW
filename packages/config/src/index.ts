@@ -19,6 +19,24 @@ const commaSeparated = (value: string): string[] =>
     .map((entry) => entry.trim())
     .filter((entry) => entry.length > 0);
 
+const keyId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/);
+const base64Key = z.string().superRefine((value, context) => {
+  let decoded: Buffer;
+  try {
+    decoded = Buffer.from(value, "base64");
+  } catch {
+    decoded = Buffer.alloc(0);
+  }
+  if (
+    decoded.length !== 32 ||
+    decoded.toString("base64").replace(/=+$/u, "") !== value.replace(/=+$/u, "")
+  )
+    context.addIssue({
+      code: "custom",
+      message: "Key must be canonical base64 for exactly 32 bytes.",
+    });
+});
+
 const platformApiSchema = z
   .object({
     APP_ENV: z.enum(["development", "test", "production"]).default("development"),
@@ -36,8 +54,20 @@ const platformApiSchema = z
       .transform(commaSeparated)
       .pipe(z.array(oidcSigningAlgorithm).min(1)),
     OIDC_SERVICE_CLIENT_IDS: z.string().default("").transform(commaSeparated),
+    IDENTIFIER_ENCRYPTION_KEY_ID: keyId,
+    IDENTIFIER_ENCRYPTION_KEY_BASE64: base64Key,
+    IDENTIFIER_FINGERPRINT_KEY_ID: keyId,
+    IDENTIFIER_FINGERPRINT_KEY_BASE64: base64Key,
   })
   .superRefine((config, context) => {
+    if (
+      config.IDENTIFIER_ENCRYPTION_KEY_BASE64 === config.IDENTIFIER_FINGERPRINT_KEY_BASE64
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["IDENTIFIER_FINGERPRINT_KEY_BASE64"],
+        message: "Identifier encryption and fingerprint keys must be distinct.",
+      });
     if (config.APP_ENV !== "production") {
       return;
     }

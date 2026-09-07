@@ -1,6 +1,7 @@
 import { isResourceId, type ResourceRef } from "@intelligence/contracts";
 import { AppError } from "../../../platform/errors/index.js";
 import { assertExpectedRevision } from "../../../platform/http/etag.js";
+import type { SubjectSeedSummary } from "./subject-seed.js";
 
 export const SUBJECT_TYPES = [
   "PERSON",
@@ -41,6 +42,7 @@ export type InvestigationSubject = Readonly<{
   role: SubjectRole;
   status: SubjectStatus;
   entityRef: SubjectEntityRef | null;
+  seed: SubjectSeedSummary | null;
   revision: number;
   createdAt: string;
   updatedAt: string;
@@ -70,6 +72,7 @@ export function createSubject(
     investigationId?: string | null;
     subjectType: SubjectType;
     role: SubjectRole;
+    seed?: SubjectSeedSummary | null;
   },
   now: Date,
 ): InvestigationSubject {
@@ -87,6 +90,7 @@ export function createSubject(
     role: input.role,
     status: "UNRESOLVED",
     entityRef: null,
+    seed: input.seed ?? null,
     revision: 1,
     createdAt: timestamp,
     updatedAt: timestamp,
@@ -192,6 +196,7 @@ function freeze(value: InvestigationSubject): InvestigationSubject {
   return Object.freeze({
     ...value,
     entityRef: value.entityRef ? Object.freeze({ ...value.entityRef }) : null,
+    seed: value.seed ? Object.freeze({ ...value.seed }) : null,
   });
 }
 function validateId(id: string): void {

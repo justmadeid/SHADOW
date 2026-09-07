@@ -1,4 +1,4 @@
-import { isResourceId } from "@intelligence/contracts";
+import { DATA_CLASSIFICATIONS, isResourceId } from "@intelligence/contracts";
 import { AppError } from "../../../platform/errors/index.js";
 import {
   SUBJECT_ROLES,
@@ -7,9 +7,10 @@ import {
   type SubjectType,
 } from "./investigation-subject.js";
 import type { CreateSubjectInput, UpdateSubjectInput } from "./subject-repository.js";
+import { SUBJECT_SEED_FIELD_NAMES, type SubjectSeedFieldInput } from "./subject-seed.js";
 
 export function parseCreateSubject(value: unknown): CreateSubjectInput {
-  const body = record(value, ["subjectType", "role", "investigationId"]);
+  const body = record(value, ["subjectType", "role", "investigationId", "seed"]);
   if (
     !SUBJECT_TYPES.includes(body.subjectType as SubjectType) ||
     !SUBJECT_ROLES.includes(body.role as SubjectRole) ||
@@ -17,10 +18,31 @@ export function parseCreateSubject(value: unknown): CreateSubjectInput {
       (typeof body.investigationId !== "string" || !isResourceId(body.investigationId)))
   )
     invalid();
+  const seed = body.seed === undefined ? undefined : parsePublicSeed(body.seed);
   return {
     subjectType: body.subjectType as SubjectType,
     role: body.role as SubjectRole,
     investigationId: (body.investigationId as string | null | undefined) ?? null,
+    ...(seed ? { seed } : {}),
+  };
+}
+
+function parsePublicSeed(value: unknown): { fields: SubjectSeedFieldInput[] } {
+  const seed = record(value, ["fields"]);
+  if (!Array.isArray(seed.fields) || seed.fields.length < 1 || seed.fields.length > 20)
+    invalid();
+  return {
+    fields: seed.fields.map((value) => {
+      const field = record(value, ["name", "value", "origin", "classification"]);
+      if (
+        !SUBJECT_SEED_FIELD_NAMES.includes(field.name as never) ||
+        typeof field.value !== "string" ||
+        field.origin !== "INVESTIGATOR_INPUT" ||
+        !DATA_CLASSIFICATIONS.includes(field.classification as never)
+      )
+        invalid();
+      return field as unknown as SubjectSeedFieldInput;
+    }),
   };
 }
 export function parseUpdateSubject(value: unknown): UpdateSubjectInput {

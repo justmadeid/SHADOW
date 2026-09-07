@@ -12,7 +12,9 @@ info:
     entity-discovery grants do not bypass Case membership. Classification-specific
     restrictions are evaluated by Governance policy hooks and are not implied by
     these roles. Case handling metadata describes obligations, not an access grant.
-    Export/source runtime enforcement and identifier endpoints are later slices.
+    Export/source runtime enforcement remains a later slice. P2-004 identifier
+    endpoints use encrypted storage, keyed comparison fingerprints, server-side
+    field visibility and durable audit before protected disclosure.
   license:
     name: Proprietary
     identifier: LicenseRef-Proprietary
@@ -21,6 +23,239 @@ servers:
 security:
   - oidcAccessToken: []
 paths:
+  /workspaces/{workspaceId}/entities:
+    parameters:
+      - name: workspaceId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: createEntity
+      summary: Create a manually curated Workspace Entity
+      tags: [Entity Registry]
+      description: >-
+        Active Workspace membership and WORKSPACE_MANAGE are required. This is a
+        restricted manual curation/import path; the normal Subject identity path
+        remains Candidate Resolution in P2-008. Only thin identity fields are
+        accepted. Identifier, Case context, Knowledge and merge fields are rejected.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string, minLength: 8, maxLength: 200, pattern: '^[A-Za-z0-9._~:+/-]+$' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateEntity" }
+      responses:
+        "201":
+          description: Created or replayed Entity
+          headers:
+            ETag: { schema: { type: string } }
+            Location: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Entity" }
+        "400": { $ref: "#/components/responses/EntityError" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/UserPrincipalRequired" }
+        "404": { $ref: "#/components/responses/EntityError" }
+        "409": { $ref: "#/components/responses/EntityError" }
+        "500": { $ref: "#/components/responses/EntityError" }
+    get:
+      operationId: listEntities
+      summary: List authorized thin identities in a Workspace
+      tags: [Entity Registry]
+      description: >-
+        Active Workspace membership and WORKSPACE_VIEW are required. Returns identity
+        only and never reveals Case membership, Evidence, allegations or Knowledge.
+        This is not the possible-match/disclosure query owned by P2-007.
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - name: cursor
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Bounded Entity page
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items, page]
+                properties:
+                  items:
+                    type: array
+                    maxItems: 100
+                    items: { $ref: "#/components/schemas/Entity" }
+                  page:
+                    type: object
+                    additionalProperties: false
+                    required: [hasMore, nextCursor]
+                    properties:
+                      hasMore: { type: boolean }
+                      nextCursor: { type: [string, "null"] }
+        "400": { $ref: "#/components/responses/EntityError" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/UserPrincipalRequired" }
+        "404": { $ref: "#/components/responses/EntityError" }
+  /entities/{entityId}:
+    parameters:
+      - name: entityId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getEntity
+      summary: Read a Workspace Entity
+      tags: [Entity Registry]
+      description: Active Workspace membership and WORKSPACE_VIEW are required; absent and inaccessible Entities share the same response.
+      responses:
+        "200": { $ref: "#/components/responses/EntitySuccess" }
+        "400": { $ref: "#/components/responses/EntityError" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/UserPrincipalRequired" }
+        "404": { $ref: "#/components/responses/EntityError" }
+    patch:
+      operationId: updateEntity
+      summary: Rename, add an alias, or archive an Entity
+      tags: [Entity Registry]
+      description: >-
+        Active Workspace membership and WORKSPACE_MANAGE are required. Exactly one
+        command is accepted. Rename preserves the old canonical label as an alias;
+        aliases are append-only. Type and Workspace are immutable. MERGED status and
+        mergedInto are reserved for the auditable P2-011 merge command.
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateEntity" }
+      responses:
+        "200": { $ref: "#/components/responses/EntitySuccess" }
+        "400": { $ref: "#/components/responses/EntityError" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/UserPrincipalRequired" }
+        "404": { $ref: "#/components/responses/EntityError" }
+        "409": { $ref: "#/components/responses/EntityError" }
+        "412": { $ref: "#/components/responses/CaseRevisionMismatch" }
+        "500": { $ref: "#/components/responses/EntityError" }
+  /entities/{entityId}/identifiers:
+    parameters:
+      - name: entityId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: createEntityIdentifier
+      summary: Add a protected identifier to an active Entity
+      tags: [Entity Registry]
+      description: >-
+        Active Workspace membership plus WORKSPACE_VIEW and WORKSPACE_MANAGE are
+        required. The server normalizes the controlled value, encrypts it with
+        authenticated randomized encryption and derives a Workspace/type-bound keyed
+        comparison fingerprint. The response is always fixed-mask and never echoes
+        the submitted value. Duplicate identifier values within one Workspace conflict.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string, minLength: 8, maxLength: 200, pattern: '^[A-Za-z0-9._~:+/-]+$' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateIdentifier" }
+      responses:
+        "201":
+          description: Created or replayed masked Identifier
+          headers:
+            Location: { schema: { type: string } }
+            Cache-Control: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IdentifierView" }
+        "400": { $ref: "#/components/responses/EntityError" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/UserPrincipalRequired" }
+        "404": { $ref: "#/components/responses/EntityError" }
+        "409": { $ref: "#/components/responses/EntityError" }
+        "500": { $ref: "#/components/responses/EntityError" }
+    get:
+      operationId: listEntityIdentifiers
+      summary: List safe Identifier metadata for an Entity
+      tags: [Entity Registry]
+      description: >-
+        Active Workspace membership and WORKSPACE_VIEW are required. Collection
+        responses are always fixed-mask; clients must explicitly request one
+        Identifier through the audited detail boundary for any stronger visibility.
+      responses:
+        "200":
+          description: Fixed-mask Identifier list
+          headers:
+            Cache-Control: { schema: { type: string } }
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    maxItems: 100
+                    items: { $ref: "#/components/schemas/IdentifierView" }
+        "400": { $ref: "#/components/responses/EntityError" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/UserPrincipalRequired" }
+        "404": { $ref: "#/components/responses/EntityError" }
+  /identifiers/{identifierId}:
+    parameters:
+      - name: identifierId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getEntityIdentifier
+      summary: Read an Identifier through field-level policy and audit
+      tags: [Entity Registry]
+      description: >-
+        Without a restricted grant and a valid reason, SENSITIVE/RESTRICTED values
+        remain fixed-mask. IDENTIFIER_USE_RESTRICTED yields MATCH_ONLY and never raw
+        content. IDENTIFIER_VIEW_RESTRICTED plus a reason may yield FULL only after
+        the critical Audit transaction commits. The operation ID gives retries a
+        stable audit identity and is required whenever a reason is supplied.
+      parameters:
+        - name: X-Reason-For-Access
+          in: header
+          required: false
+          schema:
+            type: string
+            enum: [IDENTITY_VERIFICATION, DUPLICATE_REVIEW, AUTHORIZED_INVESTIGATION, DATA_QUALITY_REVIEW]
+        - name: X-Audit-Operation-Id
+          in: header
+          required: false
+          description: Required whenever X-Reason-For-Access is supplied.
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Policy-derived Identifier view
+          headers:
+            Cache-Control: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IdentifierView" }
+        "400": { $ref: "#/components/responses/EntityError" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/UserPrincipalRequired" }
+        "404": { $ref: "#/components/responses/EntityError" }
+        "409": { $ref: "#/components/responses/EntityError" }
+        "503": { $ref: "#/components/responses/EntityError" }
   /cases/{caseId}/subjects:
     parameters:
       - $ref: "#/components/parameters/CaseId"
@@ -31,9 +266,13 @@ paths:
       description: >-
         Active Workspace and Case OWNER/EDITOR membership required. Parent Case must
         be DRAFT or ACTIVE. Optional Investigation must be ACTIVE in the same Case.
-        Entity linkage, seeds and resolution status are not writable. Replay returns
-        the current Subject after reauthorization; changed payload with the same key
-        conflicts. Creates Subject, revision history and Outbox in one transaction.
+        An optional immutable seed accepts only controlled, classified
+        investigator-input fields; canonical Evidence/Source provenance is reserved
+        for trusted server-side integrations. RESTRICTED seed storage is unavailable
+        until the protected identifier slice. Entity linkage and resolution status
+        are not writable. Replay returns the current Subject after reauthorization;
+        changed payload with the same key conflicts. Creates Subject, seed, revision
+        history and Outbox in one transaction.
       parameters:
         - name: Idempotency-Key
           in: header
@@ -140,6 +379,30 @@ paths:
         "409": { $ref: "#/components/responses/SubjectError" }
         "412": { $ref: "#/components/responses/CaseRevisionMismatch" }
         "500": { $ref: "#/components/responses/SubjectError" }
+  /subjects/{subjectId}/seed:
+    parameters:
+      - name: subjectId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getSubjectSeed
+      summary: Read an authorized Subject's immutable seed
+      tags: [Subject]
+      description: >-
+        OWNER/EDITOR/VIEWER Case membership required. SENSITIVE values are returned
+        only as fixed masking; PUBLIC and INTERNAL values are returned in full.
+        Subject list and detail responses expose seed metadata only, never field values.
+      responses:
+        "200":
+          description: Immutable seed with policy-presented field values
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SubjectSeed" }
+        "400": { $ref: "#/components/responses/SubjectError" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/UserPrincipalRequired" }
+        "404": { $ref: "#/components/responses/SubjectError" }
   /session:
     get:
       operationId: getUserSession
@@ -724,6 +987,18 @@ components:
       content:
         application/json:
           schema: { $ref: "#/components/schemas/InvestigationSubject" }
+    EntitySuccess:
+      description: Current Entity revision
+      headers:
+        ETag: { schema: { type: string } }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Entity" }
+    EntityError:
+      description: Invalid input, undisclosed resource, authorization/lifecycle/idempotency conflict or sanitized persistence failure
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
     SubjectError:
       description: Invalid input, undisclosed resource, lifecycle/idempotency conflict or sanitized persistence failure
       content:
@@ -784,6 +1059,110 @@ components:
       bearerFormat: JWT
       description: OIDC access token validated against the configured issuer JWKS.
   schemas:
+    EntityType:
+      type: string
+      enum: [PERSON, ORGANIZATION, SOCIAL_ACCOUNT, EMAIL_ADDRESS, PHONE_NUMBER, LOCATION, ADDRESS, DOMAIN, WEBSITE, IP_ADDRESS, VEHICLE, DEVICE, DOCUMENT, EVENT]
+    EntityAlias:
+      type: object
+      additionalProperties: false
+      required: [id, label, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        label: { type: string, minLength: 1, maxLength: 200 }
+        createdAt: { type: string, format: date-time }
+    EntityRef:
+      type: object
+      additionalProperties: false
+      required: [type, id, workspaceId]
+      properties:
+        type: { const: ENTITY }
+        id: { type: string, format: uuid }
+        workspaceId: { type: string, format: uuid }
+    Entity:
+      type: object
+      additionalProperties: false
+      required: [id, workspaceId, type, status, canonicalLabel, aliases, mergedInto, revision, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        workspaceId: { type: string, format: uuid }
+        type: { $ref: "#/components/schemas/EntityType" }
+        status: { type: string, enum: [ACTIVE, MERGED, ARCHIVED] }
+        canonicalLabel: { type: string, minLength: 1, maxLength: 200 }
+        aliases:
+          type: array
+          items: { $ref: "#/components/schemas/EntityAlias" }
+        mergedInto:
+          oneOf:
+            - $ref: "#/components/schemas/EntityRef"
+            - type: "null"
+        revision: { type: integer, minimum: 1 }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    CreateEntity:
+      type: object
+      additionalProperties: false
+      required: [type, canonicalLabel]
+      properties:
+        type: { $ref: "#/components/schemas/EntityType" }
+        canonicalLabel: { type: string, minLength: 1, maxLength: 200 }
+        aliases:
+          type: array
+          maxItems: 20
+          items: { type: string, minLength: 1, maxLength: 200 }
+    UpdateEntity:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [canonicalLabel]
+          properties:
+            canonicalLabel: { type: string, minLength: 1, maxLength: 200 }
+        - type: object
+          additionalProperties: false
+          required: [alias]
+          properties:
+            alias: { type: string, minLength: 1, maxLength: 200 }
+        - type: object
+          additionalProperties: false
+          required: [status]
+          properties:
+            status: { const: ARCHIVED }
+    IdentifierType:
+      type: string
+      enum: [NATIONAL_ID, PHONE, EMAIL, PLATFORM_USER_ID, USERNAME, INTERNAL_RESIDENT_ID]
+    CreateIdentifier:
+      type: object
+      additionalProperties: false
+      required: [type, value, classification]
+      properties:
+        type: { $ref: "#/components/schemas/IdentifierType" }
+        value:
+          type: string
+          minLength: 3
+          maxLength: 320
+          description: Protected input; never echoed, logged, queued or stored in plaintext.
+        classification: { $ref: "#/components/schemas/DataClassification" }
+    IdentifierView:
+      type: object
+      additionalProperties: false
+      required: [id, entityId, workspaceId, type, classification, status, revision, createdAt, updatedAt, visibility]
+      properties:
+        id: { type: string, format: uuid }
+        entityId: { type: string, format: uuid }
+        workspaceId: { type: string, format: uuid }
+        type: { $ref: "#/components/schemas/IdentifierType" }
+        classification: { $ref: "#/components/schemas/DataClassification" }
+        status: { type: string, enum: [ACTIVE, REVOKED] }
+        revision: { type: integer, minimum: 1 }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        visibility: { type: string, enum: [FULL, MASKED, MATCH_ONLY, HIDDEN] }
+        displayValue:
+          type: string
+          description: Present only for FULL or MASKED; MASKED is always four bullets.
+        matchStatus:
+          type: string
+          enum: [EXACT_MATCH, NO_MATCH, UNKNOWN]
+          description: Present only for MATCH_ONLY; this read endpoint returns UNKNOWN.
     SubjectType:
       type: string
       enum: [PERSON, ORGANIZATION, SOCIAL_ACCOUNT, DOMAIN, UNKNOWN]
@@ -798,6 +1177,103 @@ components:
         subjectType: { $ref: "#/components/schemas/SubjectType" }
         role: { $ref: "#/components/schemas/SubjectRole" }
         investigationId: { type: [string, "null"], format: uuid }
+        seed: { $ref: "#/components/schemas/CreateSubjectSeed" }
+    SubjectSeedFieldName:
+      type: string
+      enum: [DISPLAY_NAME, ORGANIZATION_NAME, USERNAME, DOMAIN_NAME, LOCATION_TEXT, SOCIAL_PROFILE_URL]
+    CreateSubjectSeed:
+      type: object
+      additionalProperties: false
+      required: [fields]
+      properties:
+        fields:
+          type: array
+          minItems: 1
+          maxItems: 20
+          items:
+            type: object
+            additionalProperties: false
+            required: [name, value, origin, classification]
+            properties:
+              name: { $ref: "#/components/schemas/SubjectSeedFieldName" }
+              value:
+                type: string
+                minLength: 1
+                maxLength: 2000
+                description: Field-specific normalization applies; non-URL fields permit at most 300 characters.
+              origin:
+                type: string
+                const: INVESTIGATOR_INPUT
+                description: Public callers cannot assert Evidence, Source Record, extraction or import provenance.
+              classification:
+                allOf:
+                  - $ref: "#/components/schemas/DataClassification"
+                description: RESTRICTED seed values remain rejected; protected identifiers must use the P2-004 Entity Identifier endpoints.
+    SubjectSeedSummary:
+      type: object
+      additionalProperties: false
+      required: [id, fieldCount]
+      properties:
+        id: { type: string, format: uuid }
+        fieldCount: { type: integer, minimum: 1, maximum: 20 }
+    SubjectSeedProvenanceRef:
+      type: object
+      additionalProperties: false
+      required: [type, id, workspaceId, caseId]
+      properties:
+        type: { type: string, enum: [EVIDENCE, SOURCE_RECORD] }
+        id: { type: string, format: uuid }
+        workspaceId: { type: string, format: uuid }
+        caseId: { type: string, format: uuid }
+    PresentedSubjectSeedValue:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [classification, visibility, displayValue]
+          properties:
+            classification: { $ref: "#/components/schemas/DataClassification" }
+            visibility: { const: FULL }
+            displayValue: { type: string }
+        - type: object
+          additionalProperties: false
+          required: [classification, visibility, displayValue]
+          properties:
+            classification: { const: SENSITIVE }
+            visibility: { const: MASKED }
+            displayValue: { const: "••••" }
+    SubjectSeed:
+      type: object
+      additionalProperties: false
+      required: [id, subjectId, workspaceId, caseId, fields, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        subjectId: { type: string, format: uuid }
+        workspaceId: { type: string, format: uuid }
+        caseId: { type: string, format: uuid }
+        createdAt: { type: string, format: date-time }
+        fields:
+          type: array
+          minItems: 1
+          maxItems: 20
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, ordinal, name, origin, classification, evidenceRef, sourceRecordRef, value]
+            properties:
+              id: { type: string, format: uuid }
+              ordinal: { type: integer, minimum: 0, maximum: 19 }
+              name: { $ref: "#/components/schemas/SubjectSeedFieldName" }
+              origin: { type: string, enum: [INVESTIGATOR_INPUT, SOURCE_RECORD, EVIDENCE, ANALYSIS_EXTRACTION, IMPORT] }
+              classification: { $ref: "#/components/schemas/DataClassification" }
+              evidenceRef:
+                oneOf:
+                  - $ref: "#/components/schemas/SubjectSeedProvenanceRef"
+                  - type: "null"
+              sourceRecordRef:
+                oneOf:
+                  - $ref: "#/components/schemas/SubjectSeedProvenanceRef"
+                  - type: "null"
+              value: { $ref: "#/components/schemas/PresentedSubjectSeedValue" }
     UpdateSubject:
       oneOf:
         - type: object
@@ -813,7 +1289,7 @@ components:
     InvestigationSubject:
       type: object
       additionalProperties: false
-      required: [id, workspaceId, caseId, investigationId, subjectType, role, status, entityRef, revision, createdAt, updatedAt]
+      required: [id, workspaceId, caseId, investigationId, subjectType, role, status, entityRef, seed, revision, createdAt, updatedAt]
       properties:
         id: { type: string, format: uuid }
         workspaceId: { type: string, format: uuid }
@@ -826,6 +1302,10 @@ components:
           enum: [UNRESOLVED, ARCHIVED]
           description: Resolution persistence is deferred to P2-003/P2-008.
         entityRef: { type: "null" }
+        seed:
+          oneOf:
+            - $ref: "#/components/schemas/SubjectSeedSummary"
+            - type: "null"
         revision: { type: integer, minimum: 1 }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }

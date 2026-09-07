@@ -47,7 +47,7 @@ describe("InvestigationSubject domain baseline", () => {
       revision: 1,
     });
     expect(Object.isFrozen(value)).toBe(true);
-    expect(value).not.toHaveProperty("seed");
+    expect(value.seed).toBeNull();
   });
   it("does not mass assign identity or status at creation", () => {
     const extra = { ...input, status: "RESOLVED", entityRef: { id: entityId } };
