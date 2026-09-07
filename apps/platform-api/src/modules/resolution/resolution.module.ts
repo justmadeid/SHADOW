@@ -7,13 +7,15 @@ import {
   RequestContextStore,
 } from "../../platform/request-context/index.js";
 import { SubjectModule } from "../subject/index.js";
+import { EntityModule } from "../entity/index.js";
+import { ResolutionMatchFacade } from "./application/resolution-match.facade.js";
 import { ResolutionFacade } from "./application/resolution.facade.js";
 import { RESOLUTION_REPOSITORY } from "./domain/resolution-repository.js";
 import { PostgresResolutionRepository } from "./infrastructure/persistence/postgres-resolution.repository.js";
 import { ResolutionController } from "./presentation/http/resolution.controller.js";
 
 @Module({
-  imports: [DatabaseModule, RequestContextModule, SubjectModule],
+  imports: [DatabaseModule, RequestContextModule, SubjectModule, EntityModule],
   controllers: [ResolutionController],
   providers: [
     {
@@ -26,7 +28,8 @@ import { ResolutionController } from "./presentation/http/resolution.controller.
         ),
     },
     ResolutionFacade,
+    ResolutionMatchFacade,
   ],
-  exports: [ResolutionFacade],
+  exports: [ResolutionFacade, ResolutionMatchFacade],
 })
 export class ResolutionModule {}

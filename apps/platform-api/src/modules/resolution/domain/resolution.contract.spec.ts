@@ -2,6 +2,7 @@ import fs from "node:fs";
 import { describe, expect, it } from "vitest";
 import { newUuid } from "../../../platform/ids/uuid.js";
 import { createCandidate } from "./candidate.js";
+import { createEntityMatch, presentEntityMatch } from "./matching-signal.js";
 import { createResolutionSession } from "./resolution-session.js";
 
 describe("P2-005 Resolution public contract", () => {
@@ -72,5 +73,65 @@ describe("P2-005 Resolution public contract", () => {
     expect(contract).toContain("/candidates/{candidateId}:");
     expect(contract).not.toContain("/candidates/{candidateId}/actions/resolve:");
     expect(contract).not.toContain("/subjects/{subjectId}/actions/start-resolution:");
+  });
+
+  it("serializes P2-006 explanations without values, fingerprints, or scores", () => {
+    const scope = {
+      workspaceId: newUuid(),
+      caseId: newUuid(),
+      subjectId: newUuid(),
+    };
+    const session = createResolutionSession({ id: newUuid(), ...scope }, new Date(0));
+    const candidate = createCandidate(
+      {
+        id: newUuid(),
+        resolutionSessionId: session.id,
+        ...scope,
+        subjectType: "PERSON",
+        type: "PERSON",
+        displayLabel: null,
+        classification: "RESTRICTED",
+        source: { origin: "INVESTIGATOR_INPUT", resource: null },
+      },
+      new Date(0),
+    );
+    const match = createEntityMatch(
+      {
+        id: newUuid(),
+        candidate,
+        entity: {
+          id: newUuid(),
+          workspaceId: scope.workspaceId,
+          type: "PERSON",
+          revision: 2,
+        },
+        matchLevel: "VERY_HIGH",
+        signals: [
+          {
+            id: newUuid(),
+            kind: "MATCHING",
+            field: "NATIONAL_ID",
+            result: "EXACT_MATCH",
+            strength: "STRONG",
+            classification: "RESTRICTED",
+            valueVisibility: "MATCH_ONLY",
+          },
+        ],
+      },
+      new Date(0),
+    );
+    const wire = JSON.stringify(presentEntityMatch(match, true));
+    expect(wire).toContain("EXACT_MATCH");
+    expect(wire).not.toContain("displayValue");
+    expect(wire).not.toContain("fingerprint");
+    expect(wire).not.toContain("score");
+
+    const contract = fs.readFileSync(
+      new URL("../../../../../../docs/contracts/platform-api-v1.yaml", import.meta.url),
+      "utf8",
+    );
+    expect(contract).toContain("enum: [PUBLIC, INTERNAL, SENSITIVE, RESTRICTED]");
+    expect(contract).toContain('fixed displayLabel "Restricted candidate"');
+    expect(contract).not.toContain("/resolutions/{resolutionId}/matches:");
   });
 });

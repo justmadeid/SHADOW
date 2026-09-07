@@ -10,6 +10,15 @@ import {
   type Candidate,
   type CandidateSourceOrigin,
 } from "../../domain/candidate.js";
+import {
+  createEntityMatch,
+  type CreateMatchSignalInput,
+  type EntityMatch,
+  type MatchSignalField,
+  type MatchSignalKind,
+  type MatchSignalResult,
+  type MatchSignalStrength,
+} from "../../domain/matching-signal.js";
 import type { ResolutionRepository } from "../../domain/resolution-repository.js";
 import {
   createResolutionSession,
@@ -208,6 +217,164 @@ export class PostgresResolutionRepository implements ResolutionRepository {
     return (result.rows as CandidateRow[]).map(mapCandidate);
   }
 
+  async recordEntityMatch(
+    command: Parameters<ResolutionRepository["recordEntityMatch"]>[0],
+  ): Promise<EntityMatch> {
+    this.requireTransaction();
+    parseIdempotencyKey(command.idempotencyKey, { required: true });
+    if (
+      !["USER", "SERVICE"].includes(command.producerType) ||
+      !command.producerId.trim() ||
+      command.producerId.length > 255
+    )
+      this.invalidMatch();
+    const db = this.database.connection();
+    const replayLock = `entity-match:${command.producerType}:${command.producerId}:${command.idempotencyKey}`;
+    await db.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${replayLock}, 0))`,
+    );
+    const replay = await db.execute(sql`SELECT entity_match_id
+      FROM resolution_entity_match_idempotency
+      WHERE producer_type = ${command.producerType}
+        AND producer_id = ${command.producerId}
+        AND idempotency_key = ${command.idempotencyKey}`);
+    const replayId = (replay.rows[0] as { entity_match_id: string } | undefined)
+      ?.entity_match_id;
+    if (replayId) {
+      const existing = await this.findEntityMatch(replayId);
+      if (!existing || !sameEntityMatch(existing, command)) this.idempotencyConflict();
+      return existing;
+    }
+
+    const current = await db.execute(sql`SELECT id FROM candidates
+      WHERE id = ${command.candidate.id}
+        AND resolution_session_id = ${command.candidate.resolutionSessionId}
+        AND workspace_id = ${command.candidate.workspaceId}
+        AND case_id = ${command.candidate.caseId}
+        AND status = 'PENDING_REVIEW'
+        AND revision = ${command.candidate.revision}
+      FOR UPDATE`);
+    if (!current.rows.length)
+      throw new AppError({
+        code: "CANDIDATE_NOT_FOUND",
+        message: "Candidate was not found.",
+        statusCode: 404,
+      });
+
+    const snapshotLock = `entity-match-snapshot:${command.candidate.id}:${command.entity.id}:${command.candidate.revision}:${command.entity.revision}:1`;
+    await db.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${snapshotLock}, 0))`,
+    );
+    const snapshot = await this.findEntityMatchSnapshot(
+      command.candidate.id,
+      command.entity.id,
+      command.candidate.revision,
+      command.entity.revision,
+    );
+    if (snapshot) {
+      if (!sameEntityMatch(snapshot, command)) this.matchSnapshotConflict();
+      await this.recordMatchIdempotency(snapshot, command);
+      return snapshot;
+    }
+
+    const value = createEntityMatch(
+      {
+        id: newUuid(),
+        candidate: command.candidate,
+        entity: command.entity,
+        matchLevel: command.matchLevel,
+        signals: command.signals.map((signal) => ({ ...signal, id: newUuid() })),
+      },
+      new Date(),
+    );
+    await db.execute(sql`INSERT INTO resolution_entity_matches
+      (id, resolution_session_id, candidate_id, candidate_revision, entity_id,
+       entity_revision, workspace_id, case_id, match_level, policy_version,
+       producer_type, producer_id, created_at)
+      VALUES (${value.id}, ${value.resolutionSessionId}, ${value.candidateId},
+        ${value.candidateRevision}, ${value.entityRef.id}, ${value.entityRevision},
+        ${value.workspaceId}, ${value.caseId}, ${value.matchLevel}, 1,
+        ${command.producerType}, ${command.producerId}, ${value.createdAt})`);
+    for (const [ordinal, signal] of [...value.signals, ...value.conflicts].entries())
+      await db.execute(sql`INSERT INTO resolution_match_signals
+        (id, entity_match_id, ordinal, signal_kind, signal_field, result, strength,
+         classification, value_visibility, created_at)
+        VALUES (${signal.id}, ${value.id}, ${ordinal}, ${signal.kind}, ${signal.field},
+          ${signal.result}, ${signal.strength}, ${signal.classification},
+          ${signal.valueVisibility}, ${signal.createdAt})`);
+    await this.recordMatchIdempotency(value, command);
+    await this.outbox.enqueue({
+      type: "ENTITY_MATCH_RECORDED",
+      version: 1,
+      aggregate: { type: "ENTITY_MATCH", id: value.id },
+      payload: {
+        entityMatchId: value.id,
+        resolutionSessionId: value.resolutionSessionId,
+        candidateId: value.candidateId,
+        workspaceId: value.workspaceId,
+        caseId: value.caseId,
+        policyVersion: value.policyVersion,
+      },
+      occurredAt: new Date(value.createdAt),
+    });
+    return value;
+  }
+
+  async findEntityMatch(id: string): Promise<EntityMatch | undefined> {
+    const result = await this.database
+      .connection()
+      .execute(entityMatchQuery(sql`m.id = ${id}`));
+    return result.rows[0] ? mapEntityMatch(result.rows[0] as EntityMatchRow) : undefined;
+  }
+
+  async listEntityMatches(
+    resolutionSessionId: string,
+    limit: number,
+    before?: string,
+  ): Promise<EntityMatch[]> {
+    const bound = Math.max(1, Math.min(101, Math.floor(limit)));
+    const result = await this.database.connection().execute(sql`SELECT m.*,
+      COALESCE(jsonb_agg(jsonb_build_object(
+        'id', s.id, 'entityMatchId', s.entity_match_id, 'kind', s.signal_kind,
+        'field', s.signal_field, 'result', s.result, 'strength', s.strength,
+        'classification', s.classification, 'valueVisibility', s.value_visibility,
+        'createdAt', s.created_at
+      ) ORDER BY s.ordinal) FILTER (WHERE s.id IS NOT NULL), '[]'::jsonb) AS signals
+      FROM resolution_entity_matches m
+      LEFT JOIN resolution_match_signals s ON s.entity_match_id = m.id
+      WHERE m.resolution_session_id = ${resolutionSessionId}
+        ${before ? sql`AND m.id < ${before}::uuid` : sql``}
+      GROUP BY m.id ORDER BY m.id DESC LIMIT ${bound}`);
+    return (result.rows as EntityMatchRow[]).map(mapEntityMatch);
+  }
+
+  private async findEntityMatchSnapshot(
+    candidateId: string,
+    entityId: string,
+    candidateRevision: number,
+    entityRevision: number,
+  ): Promise<EntityMatch | undefined> {
+    const result = await this.database.connection().execute(
+      entityMatchQuery(sql`m.candidate_id = ${candidateId}
+        AND m.entity_id = ${entityId}
+        AND m.candidate_revision = ${candidateRevision}
+        AND m.entity_revision = ${entityRevision}
+        AND m.policy_version = 1`),
+    );
+    return result.rows[0] ? mapEntityMatch(result.rows[0] as EntityMatchRow) : undefined;
+  }
+
+  private async recordMatchIdempotency(
+    value: EntityMatch,
+    command: Parameters<ResolutionRepository["recordEntityMatch"]>[0],
+  ): Promise<void> {
+    await this.database.connection()
+      .execute(sql`INSERT INTO resolution_entity_match_idempotency
+      (producer_type, producer_id, idempotency_key, entity_match_id, created_at)
+      VALUES (${command.producerType}, ${command.producerId}, ${command.idempotencyKey},
+        ${value.id}, ${value.createdAt})`);
+  }
+
   private async recordSession(
     value: ResolutionSession,
     actorId: string,
@@ -281,6 +448,22 @@ export class PostgresResolutionRepository implements ResolutionRepository {
       statusCode: 400,
     });
   }
+
+  private invalidMatch(): never {
+    throw new AppError({
+      code: "VALIDATION_MATCH_SIGNAL_INVALID",
+      message: "Entity match signal input is invalid.",
+      statusCode: 400,
+    });
+  }
+
+  private matchSnapshotConflict(): never {
+    throw new AppError({
+      code: "ENTITY_MATCH_SNAPSHOT_CONFLICT",
+      message: "The Entity match snapshot already exists with different signals.",
+      statusCode: 409,
+    });
+  }
 }
 
 type ResolutionSessionRow = {
@@ -315,6 +498,33 @@ type CandidateRow = {
   created_at: Date | string;
   updated_at: Date | string;
   evidence_refs: EvidenceRow[];
+};
+
+type SignalRow = {
+  id: string;
+  entityMatchId: string;
+  kind: MatchSignalKind;
+  field: MatchSignalField;
+  result: MatchSignalResult;
+  strength: MatchSignalStrength;
+  classification: Candidate["classification"];
+  valueVisibility: EntityMatch["signals"][number]["valueVisibility"];
+  createdAt: string;
+};
+
+type EntityMatchRow = {
+  id: string;
+  resolution_session_id: string;
+  candidate_id: string;
+  candidate_revision: number;
+  entity_id: string;
+  entity_revision: number;
+  workspace_id: string;
+  case_id: string;
+  match_level: EntityMatch["matchLevel"];
+  policy_version: 1;
+  created_at: Date | string;
+  signals: SignalRow[];
 };
 
 function mapSession(row: ResolutionSessionRow): ResolutionSession {
@@ -363,6 +573,87 @@ function mapCandidate(row: CandidateRow): Candidate {
     createdAt: new Date(row.created_at).toISOString(),
     updatedAt: new Date(row.updated_at).toISOString(),
   });
+}
+
+function entityMatchQuery(predicate: ReturnType<typeof sql>) {
+  return sql`SELECT m.*,
+    COALESCE(jsonb_agg(jsonb_build_object(
+      'id', s.id, 'entityMatchId', s.entity_match_id, 'kind', s.signal_kind,
+      'field', s.signal_field, 'result', s.result, 'strength', s.strength,
+      'classification', s.classification, 'valueVisibility', s.value_visibility,
+      'createdAt', s.created_at
+    ) ORDER BY s.ordinal) FILTER (WHERE s.id IS NOT NULL), '[]'::jsonb) AS signals
+    FROM resolution_entity_matches m
+    LEFT JOIN resolution_match_signals s ON s.entity_match_id = m.id
+    WHERE ${predicate} GROUP BY m.id LIMIT 1`;
+}
+
+function mapEntityMatch(row: EntityMatchRow): EntityMatch {
+  const all = (row.signals ?? []).map((signal) =>
+    Object.freeze({ ...signal, createdAt: new Date(signal.createdAt).toISOString() }),
+  );
+  return Object.freeze({
+    id: row.id,
+    resolutionSessionId: row.resolution_session_id,
+    candidateId: row.candidate_id,
+    candidateRevision: Number(row.candidate_revision),
+    workspaceId: row.workspace_id,
+    caseId: row.case_id,
+    entityRef: Object.freeze({
+      type: "ENTITY" as const,
+      id: row.entity_id,
+      workspaceId: row.workspace_id,
+    }),
+    entityRevision: Number(row.entity_revision),
+    matchLevel: row.match_level,
+    policyVersion: 1,
+    signals: Object.freeze(all.filter((signal) => signal.kind === "MATCHING")),
+    conflicts: Object.freeze(
+      all.filter(
+        (signal): signal is typeof signal & { kind: "CONFLICT" } =>
+          signal.kind === "CONFLICT",
+      ),
+    ),
+    createdAt: new Date(row.created_at).toISOString(),
+  });
+}
+
+function sameEntityMatch(
+  current: EntityMatch,
+  requested: Parameters<ResolutionRepository["recordEntityMatch"]>[0],
+): boolean {
+  const currentSignals = [...current.signals, ...current.conflicts];
+  const requestedSignals = [
+    ...requested.signals.filter((signal) => signal.kind === "MATCHING"),
+    ...requested.signals.filter((signal) => signal.kind === "CONFLICT"),
+  ];
+  return (
+    current.candidateId === requested.candidate.id &&
+    current.candidateRevision === requested.candidate.revision &&
+    current.workspaceId === requested.candidate.workspaceId &&
+    current.caseId === requested.candidate.caseId &&
+    current.entityRef.id === requested.entity.id &&
+    current.entityRef.workspaceId === requested.entity.workspaceId &&
+    current.entityRevision === requested.entity.revision &&
+    current.matchLevel === requested.matchLevel &&
+    currentSignals.length === requestedSignals.length &&
+    currentSignals.every((signal, index) => sameSignal(signal, requestedSignals[index]))
+  );
+}
+
+function sameSignal(
+  current: EntityMatch["signals"][number],
+  requested: CreateMatchSignalInput | undefined,
+): boolean {
+  return Boolean(
+    requested &&
+    current.kind === requested.kind &&
+    current.field === requested.field &&
+    current.result === requested.result &&
+    current.strength === requested.strength &&
+    current.classification === requested.classification &&
+    current.valueVisibility === requested.valueVisibility,
+  );
 }
 
 function sameCandidate(

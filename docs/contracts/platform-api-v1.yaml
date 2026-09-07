@@ -439,8 +439,9 @@ paths:
       description: >-
         Requires current SUBJECT_VIEW access. Ordered by immutable UUIDv7 ID
         descending. Cursor is bound to Resolution, Workspace and Case. Candidate
-        source references are provenance pointers, not access grants. Matching and
-        conflict signals are added by P2-006.
+        source references are provenance pointers, not access grants. P2-006 defines
+        persisted matching/conflict signals; their governance-aware Entity discovery
+        endpoint remains P2-007.
       parameters:
         - name: limit
           in: query
@@ -486,8 +487,9 @@ paths:
       description: >-
         Requires current SUBJECT_VIEW access. Absent and inaccessible Candidates
         share CANDIDATE_NOT_FOUND. Source/evidence references remain Case-scoped and
-        must be reauthorized when opened. RESTRICTED Candidate presentation fails
-        closed until P2-006. No Entity is created by this resource.
+        must be reauthorized when opened. RESTRICTED Candidates use a fixed
+        non-identifying display label and policy-safe signal metadata. No Entity is
+        created by this resource.
       responses:
         "200": { $ref: "#/components/responses/CandidateSuccess" }
         "400": { $ref: "#/components/responses/ResolutionError" }
@@ -1469,8 +1471,8 @@ components:
         displayLabel: { type: string, minLength: 1, maxLength: 200 }
         classification:
           type: string
-          enum: [PUBLIC, INTERNAL, SENSITIVE]
-          description: RESTRICTED presentation remains unavailable until P2-006 can return policy-safe signals.
+          enum: [PUBLIC, INTERNAL, SENSITIVE, RESTRICTED]
+          description: RESTRICTED Candidates always use the fixed displayLabel "Restricted candidate"; a raw restricted label is never accepted or persisted.
         source: { $ref: "#/components/schemas/CandidateSource" }
         evidenceRefs:
           type: array

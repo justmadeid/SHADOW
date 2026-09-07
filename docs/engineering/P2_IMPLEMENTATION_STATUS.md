@@ -237,8 +237,7 @@ Implemented:
 
 ### Deferred integration
 
-P2-006 owns matching/conflict signals and RESTRICTED-safe presentation. P2-008 owns the
-public start/resolve commands and the critical atomic transaction across decision,
+P2-008 owns the public start/resolve commands and the critical atomic transaction across decision,
 Entity create/link and Subject resolution. Source/Evidence/Run/Analysis existence is
 validated structurally now and must use trusted owner verification ports as those
 modules arrive. There is intentionally no public Candidate creation or resolution
@@ -258,6 +257,51 @@ mutation in P2-005.
 - Test fixtures use disposable PostgreSQL, synthetic candidates and synthetic
   authentication. No user database migration or deployment was performed.
 
+## P2-006 — MatchingSignal / ConflictSignal model implemented locally
+
+Owner: backend Resolution module. Scope and security decisions are recorded in
+[ADR-011](ADR-011_MATCHING_SIGNAL_VISIBILITY.md).
+
+Implemented:
+
+- Immutable EntityMatch snapshots pin Candidate/Entity revisions and retain both
+  supporting and contradicting signals without treating search relevance as identity
+  confidence.
+- Controlled field, result, strength, classification, visibility and match-level
+  vocabularies. Signal artifacts contain no raw/masked value, fingerprint, numeric
+  score or free-text rationale.
+- SENSITIVE/RESTRICTED signals allow only MATCH_ONLY/HIDDEN. Safe presentation removes
+  HIDDEN signals and suppresses an EntityMatch entirely when Entity discovery is not
+  authorized or no visible signal remains.
+- RESTRICTED Candidate input prohibits a raw display label and persists only the fixed
+  non-identifying label `Restricted candidate`, enforced in domain and PostgreSQL.
+- Transaction-required trusted writer, producer-scoped idempotency, immutable snapshot
+  tuple, append-only signal tables, composite scope FKs and metadata-only Outbox.
+- Forward-only Resolution migration 0002, Candidate OpenAPI update, typed signal
+  contract, domain/contract and PostgreSQL integration coverage. No SHADOW/ECHO UI is
+  added.
+
+### Deferred integration
+
+P2-007 owns protected exact-Identifier comparison, governance-aware Workspace Entity
+query, `DISCOVER_ENTITY_EXISTENCE`, cross-Case disclosure and the paginated public
+`/resolutions/{resolutionId}/matches` endpoint. P2-008 remains the only owner of
+Candidate decisions and atomic Entity/Subject mutation.
+
+## P2-006 validation (2026-09-08)
+
+- Full m0:static passed: 209 unit tests, 18 contract tests, architecture (187 source
+  files), 6 boundary tests, dependency graph, formatting, lint, typecheck, validation
+  of 14 migrations, OpenAPI lint and all production builds.
+- Full PostgreSQL/HTTP integration passed 88 tests. The 10 Resolution scenarios now
+  include three matching-signal flows covering deterministic snapshot replay,
+  producer-scoped idempotency, restricted-safe persistence, target compatibility,
+  fixed Candidate labels, append-only storage and complete Outbox rollback.
+- Existing SHADOW/ECHO regression passed 25 Playwright tests. Production dependency
+  audit reports no known vulnerabilities and Gitleaks reports no leaks.
+- Test fixtures use disposable PostgreSQL, synthetic identities and synthetic
+  authentication. No user database migration or deployment was performed.
+
 ## Deployment and rollback
 
 Review/apply migrations before deploying the API. Governance 0003 replaces a CHECK
@@ -268,4 +312,6 @@ requires two distinct 32-byte secret-manager keys and stable key IDs before API 
 do not rotate or remove them without the rewrap/fingerprint-backfill process described
 by ADR-009. Apply the additive Resolution 0001 migration before deploying the P2-005
 API and retain its session, Candidate and history tables when rolling the API back. No
-destructive data rollback.
+destructive data rollback. Apply Resolution 0002 before the P2-006 build; it replaces
+the Candidate classification CHECK with a strict superset and adds immutable match
+snapshot tables. ADR-011 records the short table-lock and rollback constraints.

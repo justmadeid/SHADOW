@@ -1,4 +1,9 @@
 import type { Candidate, CandidateType, CreateCandidateInput } from "./candidate.js";
+import type {
+  CreateMatchSignalInput,
+  EntityMatch,
+  MatchLevel,
+} from "./matching-signal.js";
 import type { ResolutionSession } from "./resolution-session.js";
 
 export const RESOLUTION_REPOSITORY = Symbol("RESOLUTION_REPOSITORY");
@@ -31,4 +36,24 @@ export interface ResolutionRepository {
     limit: number,
     before?: string,
   ): Promise<Candidate[]>;
+  recordEntityMatch(command: {
+    candidate: Candidate;
+    entity: {
+      id: string;
+      workspaceId: string;
+      type: CandidateType;
+      revision: number;
+    };
+    matchLevel: MatchLevel;
+    signals: readonly CreateMatchSignalInput[];
+    producerType: "USER" | "SERVICE";
+    producerId: string;
+    idempotencyKey: string;
+  }): Promise<EntityMatch>;
+  findEntityMatch(id: string): Promise<EntityMatch | undefined>;
+  listEntityMatches(
+    resolutionSessionId: string,
+    limit: number,
+    before?: string,
+  ): Promise<EntityMatch[]>;
 }
