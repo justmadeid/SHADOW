@@ -3,8 +3,8 @@
 ## Baseline (2026-09-07)
 
 P1-009 merged via PR #13 and P1-010 via PR #14. Synchronization PR #16 preserves
-exactly the final P1-010 tree. Local main was fast-forwarded to a61d2fa at the user's
-request. P2 contains P2-001 through P2-012 and targets M2 Reusable Identity Core.
+exactly the final P1-010 tree. P2-001 merged via PR #17; P2-002 through P2-004 merged
+together via PR #18. P2 contains P2-001 through P2-012 and targets M2 Reusable Identity Core.
 Live Auth0 and production readiness remain operator gates, not inferred from merges.
 
 ## P2-001 — Subject context API implemented locally; resolution integration pending
@@ -91,8 +91,8 @@ ports. Protected RESTRICTED values and comparison fingerprints remain P2-004 wor
 - Existing platform-web regression: 25 Playwright tests passed. Production dependency
   audit reports no known vulnerabilities and Gitleaks reports no leaks.
 - Test fixtures use disposable PostgreSQL and synthetic authentication. The completed
-  implementation is recorded in local commit c5e85e0 on main; it has not been pushed.
-  No user database migration, PR or deployment was performed.
+  implementation merged via PR #17. No user database migration or deployment was
+  performed by the implementation task.
 
 ## P2-002 validation (2026-09-07)
 
@@ -106,9 +106,9 @@ ports. Protected RESTRICTED values and comparison fingerprints remain P2-004 wor
   rollback of both Subject and seed.
 - Existing SHADOW/ECHO web regression passed 25 Playwright tests. Production
   dependency audit reports no known vulnerabilities and Gitleaks reports no leaks.
-- Test fixtures use disposable PostgreSQL and synthetic authentication. P2-002 remains
-  an uncommitted local working-tree change for user review; no user database migration,
-  commit, push, PR or deployment was performed by this task.
+- Test fixtures use disposable PostgreSQL and synthetic authentication. P2-002 later
+  merged together with P2-003/P2-004 via PR #18. No user database migration or
+  deployment was performed by the implementation task.
 
 ## P2-003 — Entity Registry aggregate implemented locally
 
@@ -157,8 +157,8 @@ Subject resolution. P2-011/P2-012 own audited merge and reversal.
 - Existing SHADOW/ECHO regression passed 25 Playwright tests. Production dependency
   audit reports no known vulnerabilities and Gitleaks reports no leaks.
 - Test fixtures use disposable PostgreSQL, synthetic identities and synthetic grants.
-  P2-002/P2-003 remain uncommitted local working-tree changes for user review; no user
-  database migration, commit, push, PR or deployment was performed by this task.
+  P2-003 later merged together with P2-002/P2-004 via PR #18. No user database
+  migration or deployment was performed by the implementation task.
 
 ## P2-004 — Secure Identifier storage implemented locally
 
@@ -209,9 +209,54 @@ disclosure and audited online key rotation are not claimed by P2-004.
 - Existing SHADOW/ECHO regression passed 25 Playwright tests. Production dependency
   audit reports no known vulnerabilities and Gitleaks reports no leaks.
 - Test fixtures use disposable PostgreSQL, synthetic identifiers, synthetic keys and
-  synthetic grants. P2-002/P2-003/P2-004 remain uncommitted local working-tree changes
-  for user review; no user database migration, commit, push, PR or deployment was
-  performed by this task.
+  synthetic grants. P2-002/P2-003/P2-004 merged via PR #18. No user database migration
+  or deployment was performed by the implementation task.
+
+## P2-005 — ResolutionSession and Candidate model implemented locally
+
+Owner: backend Resolution module. Scope and safety decisions are recorded in
+[ADR-010](ADR-010_RESOLUTION_CANDIDATE_MODEL.md).
+
+Implemented:
+
+- Case-scoped ResolutionSession lifecycle with stable UUIDv7 IDs, positive revisions,
+  Candidate counts, and terminal selected Candidate/decision references.
+- Non-canonical identity Candidate lifecycle for PERSON, ORGANIZATION, SOCIAL_ACCOUNT
+  and DOMAIN. Typed Subjects accept only compatible Candidates; UNKNOWN Subjects may
+  accept any supported identity type.
+- Controlled origin plus same-Workspace/same-Case Source Record, Evidence, Run or
+  Analysis provenance references; up to 20 unique Evidence references per Candidate.
+- Controlled decision outcomes and reason codes. Conclusive outcomes require an Entity
+  ID in the decision artifact but do not perform Entity or Subject mutation.
+- Transaction-required, producer-scoped idempotent session/Candidate persistence,
+  append-only source links/history/decision tables and metadata-only Outbox events.
+- Authorized GET session/list/detail API, stable cursor pagination bound to Resolution,
+  Workspace and Case, confidentiality-safe 404s, and ETag revisions.
+- Forward-only Resolution migration, explicit migration-owner order, OpenAPI contract,
+  domain/contract/PostgreSQL/HTTP tests. No SHADOW/ECHO UI is added.
+
+### Deferred integration
+
+P2-006 owns matching/conflict signals and RESTRICTED-safe presentation. P2-008 owns the
+public start/resolve commands and the critical atomic transaction across decision,
+Entity create/link and Subject resolution. Source/Evidence/Run/Analysis existence is
+validated structurally now and must use trusted owner verification ports as those
+modules arrive. There is intentionally no public Candidate creation or resolution
+mutation in P2-005.
+
+## P2-005 validation (2026-09-07)
+
+- Full m0:static passed: 205 unit tests, 17 contract tests, architecture (184 source
+  files), 6 boundary tests, dependency graph, formatting, lint, typecheck, validation
+  of 13 migrations, OpenAPI lint and all production builds.
+- Full PostgreSQL/HTTP integration passed 85 tests. The 7 new Resolution scenarios
+  cover idempotent session/Candidate persistence, scoped source and Evidence links,
+  authorization and membership revocation, hidden resources, stable cursor paging,
+  prohibited premature mutation routes, transaction rollback and append-only history.
+- Existing SHADOW/ECHO regression passed 25 Playwright tests. Production dependency
+  audit reports no known vulnerabilities and Gitleaks reports no leaks.
+- Test fixtures use disposable PostgreSQL, synthetic candidates and synthetic
+  authentication. No user database migration or deployment was performed.
 
 ## Deployment and rollback
 
@@ -221,4 +266,6 @@ safety-marker rationale and table-lock consideration. Roll back the API build on
 retain Subject/Entity/Identifier history and additive permissions. P2-004 additionally
 requires two distinct 32-byte secret-manager keys and stable key IDs before API start;
 do not rotate or remove them without the rewrap/fingerprint-backfill process described
-by ADR-009. No destructive data rollback.
+by ADR-009. Apply the additive Resolution 0001 migration before deploying the P2-005
+API and retain its session, Candidate and history tables when rolling the API back. No
+destructive data rollback.
