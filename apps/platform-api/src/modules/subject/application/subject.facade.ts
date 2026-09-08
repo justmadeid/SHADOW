@@ -14,6 +14,13 @@ import {
   type CreateSubjectInput,
   type UpdateSubjectInput,
 } from "../domain/subject-repository.js";
+import {
+  failSubjectResolution,
+  resolveSubject,
+  startSubjectResolution,
+  type CanonicalEntityResolver,
+  type InvestigationSubject,
+} from "../domain/investigation-subject.js";
 import { parseCreateSubject, parseUpdateSubject } from "../domain/subject-input.js";
 import { validateSubjectSeed } from "../domain/subject-seed.js";
 
@@ -175,6 +182,71 @@ export class SubjectFacade {
       assertExpectedRevision(expectedRevision, current.revision);
       return this.repository.update(current, changes, actorUserId);
     });
+  }
+
+  /** Resolution coordinator boundary: authorizes and locks the owning Case once. */
+  async withResolutionAccess<T>(
+    id: string,
+    work: (subject: InvestigationSubject) => Promise<T>,
+  ): Promise<T> {
+    const found = await this.get(id);
+    return this.cases.withAccess(found.caseId, "SUBJECT_UPDATE", async (parent) => {
+      this.mutableParent(parent);
+      const current = await this.repository.find(id);
+      if (
+        !current ||
+        current.workspaceId !== parent.workspaceId ||
+        current.caseId !== parent.id
+      )
+        return this.notFound();
+      return work(current);
+    });
+  }
+
+  async startResolutionTransition(
+    current: InvestigationSubject,
+    expectedRevision: number,
+  ): Promise<InvestigationSubject> {
+    const actorUserId = this.requireUser();
+    const next = startSubjectResolution(current, expectedRevision, new Date());
+    return this.repository.saveResolutionTransition(
+      current,
+      next,
+      actorUserId,
+      "SUBJECT_RESOLUTION_STARTED",
+    );
+  }
+
+  async resolveFromCandidate(
+    current: InvestigationSubject,
+    entityId: string,
+    resolver: CanonicalEntityResolver,
+  ): Promise<InvestigationSubject> {
+    const actorUserId = this.requireUser();
+    const next = await resolveSubject(
+      current,
+      entityId,
+      resolver,
+      current.revision,
+      new Date(),
+    );
+    return this.repository.saveResolutionTransition(
+      current,
+      next,
+      actorUserId,
+      "SUBJECT_RESOLVED",
+    );
+  }
+
+  async failResolution(current: InvestigationSubject): Promise<InvestigationSubject> {
+    const actorUserId = this.requireUser();
+    const next = failSubjectResolution(current, current.revision, new Date());
+    return this.repository.saveResolutionTransition(
+      current,
+      next,
+      actorUserId,
+      "SUBJECT_RESOLUTION_FAILED",
+    );
   }
   private mutableParent(parent: Case) {
     if (parent.status === "CLOSED" || parent.status === "ARCHIVED")

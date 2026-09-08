@@ -9,6 +9,7 @@ export const AUDIT_ACTIONS = [
   "SENSITIVE_FIELD_MATCH",
   "EVIDENCE_EXPORT_AUTHORIZATION",
   "SOURCE_ACCESS_AUTHORIZATION",
+  "CANDIDATE_RESOLUTION",
 ] as const;
 export const AUDIT_RESOURCE_TYPES = [
   "WORKSPACE",
@@ -19,6 +20,7 @@ export const AUDIT_RESOURCE_TYPES = [
   "IDENTIFIER",
   "EXPORT",
   "GOVERNANCE",
+  "CANDIDATE",
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 export type AuditInput = {

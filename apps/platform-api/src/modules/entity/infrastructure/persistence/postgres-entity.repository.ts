@@ -110,6 +110,28 @@ export class PostgresEntityRepository implements EntityRepository {
     return (result.rows as EntityRow[]).map(mapEntity);
   }
 
+  async findManyForUpdate(ids: readonly string[]): Promise<Entity[]> {
+    this.requireTransaction();
+    if (ids.length === 0) return [];
+    const uniqueIds = [...new Set(ids)].slice(0, 100);
+    const result = await this.database.connection().execute(sql`
+      SELECT e.*, COALESCE((
+        SELECT jsonb_agg(jsonb_build_object(
+          'id', a.id, 'label', a.label, 'createdAt', a.created_at
+        ) ORDER BY a.normalized_label, a.id)
+        FROM entity_aliases a
+        WHERE a.entity_id = e.id
+          AND a.normalized_label <> e.canonical_label_normalized
+      ), '[]'::jsonb) AS aliases
+      FROM entities e
+      WHERE e.id IN (${sql.join(
+        uniqueIds.map((id) => sql`${id}::uuid`),
+        sql`, `,
+      )})
+      FOR UPDATE OF e`);
+    return (result.rows as EntityRow[]).map(mapEntity);
+  }
+
   async list(workspaceId: string, limit: number, before?: string): Promise<Entity[]> {
     const bound = Math.max(1, Math.min(101, Math.floor(limit)));
     const result = await this.database.connection().execute(sql`

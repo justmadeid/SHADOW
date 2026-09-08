@@ -37,14 +37,11 @@ Implemented:
   Historical migration files were not changed. Fresh-database migration order tested.
 - OpenAPI and three Subject wire-contract tests added. No dependency/lockfile change.
 
-### Remaining acceptance gate
+### Acceptance gate satisfied by P2-008
 
-P2-001 is not marked fully complete: real canonical Entity linkage requires P2-003
-and the atomic resolution coordinator P2-008. Database and public API currently allow
-only UNRESOLVED/ARCHIVED with entityRef null. There is no production resolver fallback,
-no start-resolution endpoint, and no way to assign an arbitrary Entity via PATCH.
-The future coordinator must persist human decision, verified linkage and critical
-Audit atomically. Domain tests alone do not prove that future integration.
+P2-008 now persists the full lifecycle and verified canonical Entity linkage through
+the atomic Candidate decision coordinator. Arbitrary Entity assignment through PATCH
+remains prohibited.
 
 P2-010 owns Add Target UI and is not included in this implementation.
 
@@ -349,6 +346,49 @@ composition and P2-010 owns SHADOW review UI.
 - Test fixtures use disposable PostgreSQL, synthetic identities, identifiers and
   authentication. No user database migration or deployment was performed.
 
+## P2-008 — Atomic Candidate resolution coordinator implemented locally
+
+Owner: Resolution application coordinator. Transaction, privacy and rollout decisions
+are recorded in [ADR-013](ADR-013_ATOMIC_CANDIDATE_RESOLUTION.md).
+
+Implemented:
+
+- Idempotent `POST /subjects/{subjectId}/actions/start-resolution` with Subject
+  `If-Match`; session creation and `RESOLVING` transition are atomic.
+- Human `LINK_EXISTING`, `CREATE_NEW`, `REJECT` and `UNCERTAIN` decisions with strict
+  input, Candidate `If-Match`, actor-scoped replay and current Case authorization.
+- Canonical Entity chain/type/Workspace validation. Normal Entity creation derives
+  identity from the Candidate; callers cannot submit a canonical label. RESTRICTED
+  Candidate creation is rejected because its label is intentionally non-identifying.
+- Conclusive decisions atomically resolve Subject/session. Non-conclusive decisions
+  retain `RESOLVING` while candidates remain and end as `RESOLUTION_FAILED`/`CLOSED`
+  only after the final pending Candidate.
+- Same-transaction Candidate/session/Subject/Entity histories, metadata-only Outbox,
+  and durable `CANDIDATE_RESOLUTION` audit. Audit or Outbox failure rolls back every
+  domain write and leaves the idempotency key safely retryable.
+- Forward-only Audit 0002, Subject 0003 and Resolution 0003 migrations with composite
+  Workspace Entity FKs and lifecycle shape constraints; OpenAPI and PostgreSQL/HTTP
+  tests cover replay, all four decisions, restricted creation and complete rollback.
+
+### Deferred integration
+
+P2-009 owns TargetProfileView composition and P2-010 owns SHADOW Add Target/review UI.
+Candidate generation remains a producer/runtime concern and is not part of P2-008.
+
+## P2-008 validation (2026-09-08)
+
+- Full `m0:static` passed: 211 unit tests, 18 contract tests, architecture (187
+  source files), 6 boundary tests, dependency graph, formatting, lint, typecheck,
+  validation of 17 migrations, OpenAPI lint and all production builds.
+- Full PostgreSQL/HTTP integration passed 94 tests. The 16 Resolution scenarios cover
+  start replay, all four decisions, existing/canonical Entity handling, final
+  non-conclusive lifecycle, restricted-label protection, revision conflicts,
+  authorization, append-only history and full transaction rollback on audit failure.
+- Existing SHADOW/ECHO regression passed 25 Playwright tests. Fixtures use disposable
+  PostgreSQL and synthetic identities only. Production dependency audit reports no
+  known vulnerabilities and Gitleaks reports no leaks. No user database migration,
+  push or deployment was performed by this task.
+
 ## Deployment and rollback
 
 Review/apply migrations before deploying the API. Governance 0003 replaces a CHECK
@@ -363,3 +403,7 @@ destructive data rollback. Apply Resolution 0002 before the P2-006 build; it rep
 the Candidate classification CHECK with a strict superset and adds immutable match
 snapshot tables. ADR-011 records the short table-lock and rollback constraints. P2-007
 adds no migration and can roll back with the API while retaining match/audit history.
+Apply Audit 0002, Subject 0003 and Resolution 0003 before P2-008. These forward
+migrations retain all prior data/history and add lifecycle, scoped-link and replay
+constraints. Roll back only the API build; retain the schema and immutable records as
+described in ADR-013.

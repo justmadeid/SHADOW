@@ -9,7 +9,7 @@ import {
 } from "./matching-signal.js";
 import { createResolutionSession } from "./resolution-session.js";
 
-describe("P2-005/P2-006/P2-007 Resolution public contract", () => {
+describe("P2-005 through P2-008 Resolution public contract", () => {
   it("serializes bounded Resolution and non-canonical Candidate fields", () => {
     const scope = {
       workspaceId: newUuid(),
@@ -67,7 +67,7 @@ describe("P2-005/P2-006/P2-007 Resolution public contract", () => {
     expect(candidate).not.toHaveProperty("decision");
   });
 
-  it("publishes read-only P2-005 paths and reserves mutations for P2-008", () => {
+  it("publishes the P2-008 atomic mutation paths", () => {
     const contract = fs.readFileSync(
       new URL("../../../../../../docs/contracts/platform-api-v1.yaml", import.meta.url),
       "utf8",
@@ -75,8 +75,8 @@ describe("P2-005/P2-006/P2-007 Resolution public contract", () => {
     expect(contract).toContain("/resolutions/{resolutionId}:");
     expect(contract).toContain("/resolutions/{resolutionId}/candidates:");
     expect(contract).toContain("/candidates/{candidateId}:");
-    expect(contract).not.toContain("/candidates/{candidateId}/actions/resolve:");
-    expect(contract).not.toContain("/subjects/{subjectId}/actions/start-resolution:");
+    expect(contract).toContain("/candidates/{candidateId}/actions/resolve:");
+    expect(contract).toContain("/subjects/{subjectId}/actions/start-resolution:");
   });
 
   it("serializes P2-006 explanations without values, fingerprints, or scores", () => {

@@ -189,10 +189,43 @@ export class PostgresSubjectRepository implements SubjectRepository {
     return value;
   }
 
+  async saveResolutionTransition(
+    current: InvestigationSubject,
+    next: InvestigationSubject,
+    actorUserId: string,
+    eventType:
+      "SUBJECT_RESOLUTION_STARTED" | "SUBJECT_RESOLVED" | "SUBJECT_RESOLUTION_FAILED",
+  ): Promise<InvestigationSubject> {
+    this.requireTransaction();
+    if (
+      next.id !== current.id ||
+      next.workspaceId !== current.workspaceId ||
+      next.caseId !== current.caseId ||
+      next.revision !== current.revision + 1
+    )
+      throw new Error("Invalid Subject resolution transition.");
+    const result = await this.database.connection()
+      .execute(sql`UPDATE investigation_subjects
+      SET status = ${next.status}, entity_id = ${next.entityRef?.id ?? null},
+        revision = ${next.revision}, updated_at = ${next.updatedAt}
+      WHERE id = ${current.id} AND workspace_id = ${current.workspaceId}
+        AND case_id = ${current.caseId} AND revision = ${current.revision}
+      RETURNING id`);
+    if (!result.rows.length)
+      throw new AppError({
+        code: "CONFLICT_REVISION_MISMATCH",
+        message: "The resource has changed since it was read.",
+        statusCode: 412,
+      });
+    await this.record(next, actorUserId, eventType);
+    return next;
+  }
+
   private async record(value: InvestigationSubject, actorUserId: string, type: string) {
-    await this.database.connection()
-      .execute(sql`INSERT INTO subject_revisions (subject_id, revision, role, status, actor_user_id, occurred_at)
-      VALUES (${value.id}, ${value.revision}, ${value.role}, ${value.status}, ${actorUserId}, ${value.updatedAt})`);
+    await this.database.connection().execute(sql`INSERT INTO subject_revisions
+      (subject_id, revision, role, status, entity_id, actor_user_id, occurred_at)
+      VALUES (${value.id}, ${value.revision}, ${value.role}, ${value.status},
+        ${value.entityRef?.id ?? null}, ${actorUserId}, ${value.updatedAt})`);
     await this.outbox.enqueue({
       type,
       version: 1,
@@ -219,6 +252,7 @@ type SubjectRow = {
   subject_type: InvestigationSubject["subjectType"];
   role: InvestigationSubject["role"];
   status: InvestigationSubject["status"];
+  entity_id: string | null;
   revision: number;
   created_at: Date | string;
   updated_at: Date | string;
@@ -234,7 +268,9 @@ function mapRow(row: SubjectRow): InvestigationSubject {
     subjectType: row.subject_type,
     role: row.role,
     status: row.status,
-    entityRef: null,
+    entityRef: row.entity_id
+      ? { type: "ENTITY" as const, id: row.entity_id, workspaceId: row.workspace_id }
+      : null,
     seed: row.seed_id
       ? { id: row.seed_id, fieldCount: Number(row.seed_field_count) }
       : null,

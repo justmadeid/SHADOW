@@ -15,8 +15,8 @@ info:
     Export/source runtime enforcement remains a later slice. P2-004 identifier
     endpoints use encrypted storage, keyed comparison fingerprints, server-side
     field visibility and durable audit before protected disclosure. P2-005 adds
-    read-only ResolutionSession/Candidate review resources; start and resolve commands
-    remain reserved for the P2-008 atomic coordinator.
+    ResolutionSession/Candidate review resources. P2-008 adds idempotent start and
+    atomic human decision commands with durable audit and canonical Entity linkage.
   license:
     name: Proprietary
     identifier: LicenseRef-Proprietary
@@ -300,6 +300,38 @@ paths:
         "404": { $ref: "#/components/responses/SubjectError" }
         "409": { $ref: "#/components/responses/SubjectError" }
         "500": { $ref: "#/components/responses/SubjectError" }
+  /subjects/{subjectId}/actions/start-resolution:
+    parameters:
+      - name: subjectId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: startSubjectResolution
+      summary: Start an idempotent Subject resolution session
+      tags: [Resolution]
+      description: >-
+        OWNER/EDITOR membership, SUBJECT_UPDATE, mutable parent Case, If-Match and
+        Idempotency-Key are required. Subject RESOLVING transition and session creation
+        commit in one transaction. A retry returns the existing session.
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "202":
+          description: Resolution started or idempotently replayed
+          headers:
+            Location: { schema: { type: string } }
+            ETag: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StartResolutionResult" }
+        "400": { $ref: "#/components/responses/ResolutionError" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/UserPrincipalRequired" }
+        "404": { $ref: "#/components/responses/ResolutionError" }
+        "409": { $ref: "#/components/responses/ResolutionError" }
+        "412": { $ref: "#/components/responses/CaseRevisionMismatch" }
     get:
       operationId: listSubjects
       summary: List authorized Subjects in a Case
@@ -417,9 +449,7 @@ paths:
       tags: [Resolution]
       description: >-
         Requires current SUBJECT_VIEW access to the containing Case. Absent and
-        inaccessible sessions return the same RESOLUTION_NOT_FOUND response. This
-        P2-005 read surface cannot start a session or perform a decision; atomic
-        Subject and Entity mutation remains P2-008.
+        inaccessible sessions return the same RESOLUTION_NOT_FOUND response.
       responses:
         "200": { $ref: "#/components/responses/ResolutionSuccess" }
         "400": { $ref: "#/components/responses/ResolutionError" }
@@ -550,6 +580,46 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/UserPrincipalRequired" }
         "404": { $ref: "#/components/responses/ResolutionError" }
+  /candidates/{candidateId}/actions/resolve:
+    parameters:
+      - name: candidateId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: resolveCandidate
+      summary: Record an atomic human Candidate decision
+      tags: [Resolution]
+      description: >-
+        OWNER/EDITOR membership and SUBJECT_UPDATE are required. Decision, Candidate,
+        ResolutionSession, optional Entity create/link, Subject transition, audit and
+        Outbox events share one transaction. LINK_EXISTING requires entityId;
+        CREATE_NEW derives the canonical label from the persisted Candidate and is
+        unavailable for RESTRICTED Candidates. Retries return the original result.
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/AuditOperationId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ResolveCandidateRequest" }
+      responses:
+        "200":
+          description: Candidate decision committed or idempotently replayed
+          headers:
+            ETag: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CandidateResolutionResult" }
+        "400": { $ref: "#/components/responses/ResolutionError" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/UserPrincipalRequired" }
+        "404": { $ref: "#/components/responses/ResolutionError" }
+        "409": { $ref: "#/components/responses/ResolutionError" }
+        "412": { $ref: "#/components/responses/CaseRevisionMismatch" }
+        "503": { $ref: "#/components/responses/ResolutionError" }
   /session:
     get:
       operationId: getUserSession
@@ -1116,11 +1186,25 @@ components:
       name: If-Match
       in: header
       required: true
-      description: Quoted revision from the latest Case ETag.
+      description: Quoted revision from the latest representation ETag.
       schema:
         type: string
         pattern: '^"[0-9]+"$'
         example: '"1"'
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 200
+        pattern: '^[A-Za-z0-9._~:+/-]+$'
+    AuditOperationId:
+      name: X-Audit-Operation-Id
+      in: header
+      required: true
+      schema: { type: string, format: uuid }
     InvestigationId:
       name: investigationId
       in: path
@@ -1465,9 +1549,11 @@ components:
         role: { $ref: "#/components/schemas/SubjectRole" }
         status:
           type: string
-          enum: [UNRESOLVED, ARCHIVED]
-          description: Resolution persistence is deferred to P2-003/P2-008.
-        entityRef: { type: "null" }
+          enum: [UNRESOLVED, RESOLVING, RESOLVED, RESOLUTION_FAILED, ARCHIVED]
+        entityRef:
+          oneOf:
+            - $ref: "#/components/schemas/EntityRef"
+            - type: "null"
         seed:
           oneOf:
             - $ref: "#/components/schemas/SubjectSeedSummary"
@@ -1491,6 +1577,55 @@ components:
         revision: { type: integer, minimum: 1 }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
+    StartResolutionResult:
+      type: object
+      additionalProperties: false
+      required: [resolution, subject]
+      properties:
+        resolution: { $ref: "#/components/schemas/ResolutionSession" }
+        subject: { $ref: "#/components/schemas/InvestigationSubject" }
+    ResolutionDecision:
+      type: object
+      additionalProperties: false
+      required: [id, resolutionSessionId, candidateId, decision, targetEntityId, reasonCode, decidedByUserId, decidedAt]
+      properties:
+        id: { type: string, format: uuid }
+        resolutionSessionId: { type: string, format: uuid }
+        candidateId: { type: string, format: uuid }
+        decision: { type: string, enum: [LINK_EXISTING, CREATE_NEW, UNCERTAIN, REJECT] }
+        targetEntityId: { type: [string, "null"], format: uuid }
+        reasonCode:
+          type: string
+          enum: [EXACT_IDENTIFIER_MATCH, MULTIPLE_SUPPORTING_SIGNALS, INSUFFICIENT_EVIDENCE, CONFLICTING_SIGNALS, NOT_SAME_IDENTITY, MANUAL_REVIEW]
+        decidedByUserId: { type: string }
+        decidedAt: { type: string, format: date-time }
+    ResolveCandidateRequest:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [decision, entityId, reasonCode]
+          properties:
+            decision: { const: LINK_EXISTING }
+            entityId: { type: string, format: uuid }
+            reasonCode: { $ref: "#/components/schemas/ResolutionReasonCode" }
+        - type: object
+          additionalProperties: false
+          required: [decision, reasonCode]
+          properties:
+            decision: { type: string, enum: [CREATE_NEW, UNCERTAIN, REJECT] }
+            reasonCode: { $ref: "#/components/schemas/ResolutionReasonCode" }
+    ResolutionReasonCode:
+      type: string
+      enum: [EXACT_IDENTIFIER_MATCH, MULTIPLE_SUPPORTING_SIGNALS, INSUFFICIENT_EVIDENCE, CONFLICTING_SIGNALS, NOT_SAME_IDENTITY, MANUAL_REVIEW]
+    CandidateResolutionResult:
+      type: object
+      additionalProperties: false
+      required: [decision, candidate, resolution, subject]
+      properties:
+        decision: { $ref: "#/components/schemas/ResolutionDecision" }
+        candidate: { $ref: "#/components/schemas/Candidate" }
+        resolution: { $ref: "#/components/schemas/ResolutionSession" }
+        subject: { $ref: "#/components/schemas/InvestigationSubject" }
     CandidateResourceRef:
       type: object
       additionalProperties: false

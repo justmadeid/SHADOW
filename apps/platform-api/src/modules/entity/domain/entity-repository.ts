@@ -12,6 +12,7 @@ export interface EntityRepository {
   ): Promise<Entity>;
   find(id: string): Promise<Entity | undefined>;
   findMany(ids: readonly string[]): Promise<Entity[]>;
+  findManyForUpdate(ids: readonly string[]): Promise<Entity[]>;
   list(workspaceId: string, limit: number, before?: string): Promise<Entity[]>;
   update(current: Entity, input: UpdateEntityInput, actorUserId: string): Promise<Entity>;
 }

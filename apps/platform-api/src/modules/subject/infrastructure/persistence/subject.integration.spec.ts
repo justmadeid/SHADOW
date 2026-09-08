@@ -58,6 +58,8 @@ describe("P2 Subject HTTP and PostgreSQL", () => {
       "../../../audit/infrastructure/persistence/migrations/0001_create_audit.sql",
       "../../../../platform/events/outbox/infrastructure/persistence/migrations/0001_create_platform_outbox.sql",
       "../../../workspace/infrastructure/persistence/migrations/0001_create_workspace.sql",
+      "../../../entity/infrastructure/persistence/migrations/0001_create_entity_registry.sql",
+      "../../../entity/infrastructure/persistence/migrations/0002_create_secure_identifiers.sql",
       "../../../case/infrastructure/persistence/migrations/0001_create_case.sql",
       "../../../investigation/infrastructure/persistence/migrations/0001_create_investigation.sql",
       "../../../governance/infrastructure/persistence/migrations/0001_create_governance.sql",
@@ -65,6 +67,7 @@ describe("P2 Subject HTTP and PostgreSQL", () => {
       "../../../governance/infrastructure/persistence/migrations/0003_subject_permissions.sql",
       "./migrations/0001_create_subject.sql",
       "./migrations/0002_create_subject_seed.sql",
+      "./migrations/0003_subject_resolution.sql",
     ])
       await client.db.execute(
         sql.raw(fs.readFileSync(new URL(migration, import.meta.url), "utf8")),
