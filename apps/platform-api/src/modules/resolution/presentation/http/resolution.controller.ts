@@ -1,13 +1,74 @@
-import { Controller, Get, Headers, Inject, Param, Query, Res } from "@nestjs/common";
+import {
+  Body,
+  Controller,
+  Get,
+  Headers,
+  Inject,
+  Param,
+  Post,
+  Query,
+  Res,
+} from "@nestjs/common";
 import type { Response } from "express";
 import { isResourceId } from "@intelligence/contracts";
 import { AppError } from "../../../../platform/errors/index.js";
-import { etagForRevision } from "../../../../platform/http/etag.js";
-import { ResolutionFacade } from "../../application/resolution.facade.js";
+import { etagForRevision, parseIfMatchRevision } from "../../../../platform/http/etag.js";
+import { parseIdempotencyKey } from "../../../../platform/http/idempotency.js";
+import {
+  parseResolveCandidate,
+  ResolutionFacade,
+} from "../../application/resolution.facade.js";
 
 @Controller("api/v1")
 export class ResolutionController {
   constructor(@Inject(ResolutionFacade) private readonly resolutions: ResolutionFacade) {}
+
+  @Post("subjects/:subjectId/actions/start-resolution")
+  async start(
+    @Param("subjectId") subjectId: string,
+    @Headers("if-match") ifMatch: string | undefined,
+    @Headers("idempotency-key") key: string | undefined,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const revision = requiredRevision(ifMatch, "Subject");
+    const value = await this.resolutions.start(
+      id(subjectId),
+      revision,
+      parseIdempotencyKey(key, { required: true })!,
+    );
+    response.status(202);
+    response.setHeader("location", `/api/v1/resolutions/${value.resolution.id}`);
+    response.setHeader("etag", etagForRevision(value.subject.revision));
+    return value;
+  }
+
+  @Post("candidates/:candidateId/actions/resolve")
+  async decide(
+    @Param("candidateId") candidateId: string,
+    @Body() body: unknown,
+    @Headers("if-match") ifMatch: string | undefined,
+    @Headers("idempotency-key") key: string | undefined,
+    @Headers("x-audit-operation-id") operationId: string | undefined,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const revision = requiredRevision(ifMatch, "Candidate");
+    if (!operationId)
+      throw new AppError({
+        code: "VALIDATION_AUDIT_OPERATION_ID_REQUIRED",
+        message: "X-Audit-Operation-Id is required for Candidate resolution.",
+        statusCode: 400,
+      });
+    const value = await this.resolutions.decide(
+      id(candidateId),
+      parseResolveCandidate(body),
+      revision,
+      parseIdempotencyKey(key, { required: true })!,
+      id(operationId),
+    );
+    response.status(200);
+    response.setHeader("etag", etagForRevision(value.candidate.revision));
+    return value;
+  }
 
   @Get("resolutions/:resolutionId")
   async getSession(
@@ -82,6 +143,17 @@ export class ResolutionController {
     response.setHeader("etag", etagForRevision(value.revision));
     return value;
   }
+}
+
+function requiredRevision(value: string | undefined, resource: string): number {
+  const revision = parseIfMatchRevision(value);
+  if (revision === undefined)
+    throw new AppError({
+      code: "VALIDATION_IF_MATCH_REQUIRED",
+      message: `If-Match is required for ${resource} mutations.`,
+      statusCode: 400,
+    });
+  return revision;
 }
 
 function id(value: string): string {

@@ -7,8 +7,10 @@ import { parseIdempotencyKey } from "../../../../platform/http/idempotency.js";
 import { newUuid } from "../../../../platform/ids/uuid.js";
 import {
   createCandidate,
+  decideCandidate,
   type Candidate,
   type CandidateSourceOrigin,
+  type ResolutionDecision,
 } from "../../domain/candidate.js";
 import {
   createEntityMatch,
@@ -22,6 +24,7 @@ import {
 import type { ResolutionRepository } from "../../domain/resolution-repository.js";
 import {
   createResolutionSession,
+  recordResolutionDecision,
   registerCandidate,
   type ResolutionSession,
 } from "../../domain/resolution-session.js";
@@ -34,7 +37,7 @@ export class PostgresResolutionRepository implements ResolutionRepository {
 
   async createSession(
     command: Parameters<ResolutionRepository["createSession"]>[0],
-  ): Promise<ResolutionSession> {
+  ): Promise<{ session: ResolutionSession; replayed: boolean }> {
     this.requireTransaction();
     parseIdempotencyKey(command.idempotencyKey, { required: true });
     if (
@@ -61,7 +64,7 @@ export class PostgresResolutionRepository implements ResolutionRepository {
         existing.caseId !== command.caseId
       )
         throw new Error("Invalid ResolutionSession replay record.");
-      return existing;
+      return { session: existing, replayed: true };
     }
     const value = createResolutionSession(
       {
@@ -94,7 +97,7 @@ export class PostgresResolutionRepository implements ResolutionRepository {
       VALUES (${command.actorUserId}, ${command.idempotencyKey}, ${command.requestHash},
         ${value.id}, ${value.createdAt})`);
     await this.recordSession(value, command.actorUserId, "RESOLUTION_SESSION_CREATED");
-    return value;
+    return { session: value, replayed: false };
   }
 
   async addCandidate(
@@ -215,6 +218,156 @@ export class PostgresResolutionRepository implements ResolutionRepository {
         ${before ? sql`AND c.id < ${before}::uuid` : sql``}
       GROUP BY c.id ORDER BY c.id DESC LIMIT ${bound}`);
     return (result.rows as CandidateRow[]).map(mapCandidate);
+  }
+
+  async prepareCandidateDecision(
+    command: Parameters<ResolutionRepository["prepareCandidateDecision"]>[0],
+  ): ReturnType<ResolutionRepository["prepareCandidateDecision"]> {
+    this.requireTransaction();
+    parseIdempotencyKey(command.idempotencyKey, { required: true });
+    if (
+      !command.actorUserId.trim() ||
+      command.actorUserId.length > 255 ||
+      !/^[a-f0-9]{64}$/.test(command.requestHash)
+    )
+      this.invalid();
+    const db = this.database.connection();
+    const lock = `candidate-resolution:${command.actorUserId}:${command.idempotencyKey}`;
+    await db.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${lock}, 0))`);
+    const replay = await db.execute(sql`SELECT request_hash, candidate_id, decision_id
+      FROM candidate_resolution_idempotency
+      WHERE user_id = ${command.actorUserId} AND idempotency_key = ${command.idempotencyKey}`);
+    const replayRow = replay.rows[0] as
+      { request_hash: string; candidate_id: string; decision_id: string } | undefined;
+    if (replayRow) {
+      if (
+        replayRow.request_hash !== command.requestHash ||
+        replayRow.candidate_id !== command.candidateId
+      )
+        this.idempotencyConflict();
+      const candidate = await this.findCandidate(replayRow.candidate_id);
+      const decision = await this.findDecision(replayRow.decision_id);
+      const session = candidate
+        ? await this.findSession(candidate.resolutionSessionId)
+        : undefined;
+      if (!candidate || !decision || !session)
+        throw new Error("Invalid decision replay.");
+      return { replayed: true, session, candidate, decision };
+    }
+
+    const scope = await db.execute(sql`SELECT resolution_session_id FROM candidates
+      WHERE id = ${command.candidateId}`);
+    const resolutionSessionId = (
+      scope.rows[0] as { resolution_session_id: string } | undefined
+    )?.resolution_session_id;
+    if (!resolutionSessionId) this.candidateNotFound();
+    const sessionResult = await db.execute(sql`SELECT * FROM resolution_sessions
+      WHERE id = ${resolutionSessionId} FOR UPDATE`);
+    const candidateLock = await db.execute(sql`SELECT id FROM candidates
+      WHERE id = ${command.candidateId} FOR UPDATE`);
+    const session = sessionResult.rows[0]
+      ? mapSession(sessionResult.rows[0] as ResolutionSessionRow)
+      : undefined;
+    const candidate = candidateLock.rows.length
+      ? await this.findCandidate(command.candidateId)
+      : undefined;
+    if (
+      !session ||
+      !candidate ||
+      candidate.resolutionSessionId !== session.id ||
+      candidate.subjectId !== session.subjectId ||
+      candidate.workspaceId !== session.workspaceId ||
+      candidate.caseId !== session.caseId
+    )
+      this.candidateNotFound();
+    if (candidate.status !== "PENDING_REVIEW")
+      throw new AppError({
+        code: "CANDIDATE_ALREADY_DECIDED",
+        message: "Candidate has already received a decision.",
+        statusCode: 409,
+      });
+    if (session.status !== "NEEDS_REVIEW")
+      throw new AppError({
+        code: "RESOLUTION_INVALID_STATUS_TRANSITION",
+        message: "Resolution status transition is not allowed.",
+        statusCode: 409,
+      });
+    const pending = await db.execute(sql`SELECT count(*)::int AS count FROM candidates
+      WHERE resolution_session_id = ${session.id} AND status = 'PENDING_REVIEW'
+        AND id <> ${candidate.id}`);
+    return {
+      replayed: false,
+      session,
+      candidate,
+      remainingPendingCandidates: Number((pending.rows[0] as { count: number }).count),
+    };
+  }
+
+  async commitCandidateDecision(
+    command: Parameters<ResolutionRepository["commitCandidateDecision"]>[0],
+  ): ReturnType<ResolutionRepository["commitCandidateDecision"]> {
+    this.requireTransaction();
+    const now = new Date();
+    const result = decideCandidate(
+      command.candidate,
+      {
+        id: newUuid(),
+        decision: command.decision,
+        ...(command.targetEntityId === undefined
+          ? {}
+          : { targetEntityId: command.targetEntityId }),
+        reasonCode: command.reasonCode,
+        decidedByUserId: command.actorUserId,
+      },
+      command.candidate.revision,
+      now,
+    );
+    const session = recordResolutionDecision(
+      command.session,
+      result.candidate,
+      result.decision,
+      command.remainingPendingCandidates,
+      command.session.revision,
+      now,
+    );
+    const db = this.database.connection();
+    await db.execute(sql`INSERT INTO resolution_decisions
+      (id, resolution_session_id, candidate_id, decision, target_entity_id,
+       reason_code, decided_by_user_id, decided_at, workspace_id)
+      VALUES (${result.decision.id}, ${result.decision.resolutionSessionId},
+        ${result.decision.candidateId}, ${result.decision.decision},
+        ${result.decision.targetEntityId}, ${result.decision.reasonCode},
+        ${result.decision.decidedByUserId}, ${result.decision.decidedAt},
+        ${command.candidate.workspaceId})`);
+    const candidateUpdate = await db.execute(sql`UPDATE candidates
+      SET status = ${result.candidate.status}, revision = ${result.candidate.revision},
+        updated_at = ${result.candidate.updatedAt}
+      WHERE id = ${command.candidate.id} AND revision = ${command.candidate.revision}
+        AND status = 'PENDING_REVIEW' RETURNING id`);
+    const sessionUpdate = await db.execute(sql`UPDATE resolution_sessions
+      SET status = ${session.status}, selected_candidate_id = ${session.selectedCandidateId},
+        resolution_decision_id = ${session.resolutionDecisionId}, revision = ${session.revision},
+        updated_at = ${session.updatedAt}
+      WHERE id = ${command.session.id} AND revision = ${command.session.revision}
+        AND status = 'NEEDS_REVIEW' RETURNING id`);
+    if (!candidateUpdate.rows.length || !sessionUpdate.rows.length)
+      throw new AppError({
+        code: "CONFLICT_REVISION_MISMATCH",
+        message: "The resource has changed since it was read.",
+        statusCode: 412,
+      });
+    await db.execute(sql`INSERT INTO candidate_resolution_idempotency
+      (user_id, idempotency_key, request_hash, candidate_id, decision_id, created_at)
+      VALUES (${command.actorUserId}, ${command.idempotencyKey}, ${command.requestHash},
+        ${result.candidate.id}, ${result.decision.id}, ${result.decision.decidedAt})`);
+    await this.recordCandidate(
+      result.candidate,
+      "USER",
+      command.actorUserId,
+      "CANDIDATE_RESOLUTION_DECIDED",
+    );
+    await this.recordSession(session, command.actorUserId, "RESOLUTION_DECIDED");
+    return { session, candidate: result.candidate, decision: result.decision };
   }
 
   async recordEntityMatch(
@@ -417,13 +570,14 @@ export class PostgresResolutionRepository implements ResolutionRepository {
     value: Candidate,
     actorType: "USER" | "SERVICE",
     actorId: string,
+    eventType = "CANDIDATE_CREATED",
   ): Promise<void> {
     await this.database.connection().execute(sql`INSERT INTO candidate_revisions
       (candidate_id, revision, status, actor_type, actor_id, occurred_at)
       VALUES (${value.id}, ${value.revision}, ${value.status}, ${actorType}, ${actorId},
         ${value.updatedAt})`);
     await this.outbox.enqueue({
-      type: "CANDIDATE_CREATED",
+      type: eventType,
       version: 1,
       aggregate: { type: "CANDIDATE", id: value.id },
       payload: {
@@ -436,6 +590,22 @@ export class PostgresResolutionRepository implements ResolutionRepository {
         revision: value.revision,
       },
       occurredAt: new Date(value.updatedAt),
+    });
+  }
+
+  private async findDecision(id: string): Promise<ResolutionDecision | undefined> {
+    const result = await this.database.connection().execute(sql`SELECT *
+      FROM resolution_decisions WHERE id = ${id}`);
+    return result.rows[0]
+      ? mapDecision(result.rows[0] as ResolutionDecisionRow)
+      : undefined;
+  }
+
+  private candidateNotFound(): never {
+    throw new AppError({
+      code: "CANDIDATE_NOT_FOUND",
+      message: "Candidate was not found.",
+      statusCode: 404,
     });
   }
 
@@ -492,6 +662,16 @@ type ResolutionSessionRow = {
 };
 
 type EvidenceRow = { id: string; workspaceId: string; caseId: string };
+type ResolutionDecisionRow = {
+  id: string;
+  resolution_session_id: string;
+  candidate_id: string;
+  decision: ResolutionDecision["decision"];
+  target_entity_id: string | null;
+  reason_code: ResolutionDecision["reasonCode"];
+  decided_by_user_id: string;
+  decided_at: Date | string;
+};
 type CandidateRow = {
   id: string;
   resolution_session_id: string;
@@ -583,6 +763,19 @@ function mapCandidate(row: CandidateRow): Candidate {
     revision: Number(row.revision),
     createdAt: new Date(row.created_at).toISOString(),
     updatedAt: new Date(row.updated_at).toISOString(),
+  });
+}
+
+function mapDecision(row: ResolutionDecisionRow): ResolutionDecision {
+  return Object.freeze({
+    id: row.id,
+    resolutionSessionId: row.resolution_session_id,
+    candidateId: row.candidate_id,
+    decision: row.decision,
+    targetEntityId: row.target_entity_id,
+    reasonCode: row.reason_code,
+    decidedByUserId: row.decided_by_user_id,
+    decidedAt: new Date(row.decided_at).toISOString(),
   });
 }
 

@@ -47,6 +47,23 @@ export class EntityFacade {
     });
   }
 
+  /** Trusted Candidate-resolution port. Caller owns authorization and transaction. */
+  async createFromResolution(
+    workspaceId: string,
+    input: CreateEntityInput,
+    idempotencyKey: string,
+  ): Promise<Entity> {
+    const actorUserId = this.requireUser();
+    const normalized = normalizeCreateEntity(input);
+    parseIdempotencyKey(idempotencyKey, { required: true });
+    return this.repository.create({
+      ...normalized,
+      workspaceId,
+      actorUserId,
+      idempotencyKey,
+    });
+  }
+
   async get(id: string): Promise<Entity> {
     this.requireUser();
     const found = await this.repository.find(id);
@@ -123,8 +140,24 @@ export class EntityFacade {
     return (await this.resolveMany(workspaceId, [entityId])).get(entityId) ?? null;
   }
 
+  /** Resolution writes lock every visited merge-chain Entity until commit. */
+  async resolveForResolution(workspaceId: string, entityId: string) {
+    return (
+      (await this.resolveManyInternal(workspaceId, [entityId], true)).get(entityId) ??
+      null
+    );
+  }
+
   /** Bounded batch resolver prevents match-page reads from becoming N+1 queries. */
   async resolveMany(workspaceId: string, entityIds: readonly string[]) {
+    return this.resolveManyInternal(workspaceId, entityIds, false);
+  }
+
+  private async resolveManyInternal(
+    workspaceId: string,
+    entityIds: readonly string[],
+    forUpdate: boolean,
+  ) {
     const states = new Map(
       [...new Set(entityIds)]
         .slice(0, 100)
@@ -146,10 +179,13 @@ export class EntityFacade {
     for (let depth = 0; depth < 16; depth += 1) {
       const pending = [...states.entries()].filter(([id]) => !resolved.has(id));
       if (pending.length === 0) break;
+      const requestedIds = pending.map(([, state]) => state.currentId);
       const entities = new Map(
-        (await this.repository.findMany(pending.map(([, state]) => state.currentId))).map(
-          (entity) => [entity.id, entity],
-        ),
+        (
+          await (forUpdate
+            ? this.repository.findManyForUpdate(requestedIds)
+            : this.repository.findMany(requestedIds))
+        ).map((entity) => [entity.id, entity]),
       );
       for (const [requestedId, state] of pending) {
         if (state.visited.has(state.currentId)) {

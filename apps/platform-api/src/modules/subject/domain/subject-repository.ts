@@ -37,4 +37,11 @@ export interface SubjectRepository {
     input: UpdateSubjectInput,
     actorUserId: string,
   ): Promise<InvestigationSubject>;
+  saveResolutionTransition(
+    current: InvestigationSubject,
+    next: InvestigationSubject,
+    actorUserId: string,
+    eventType:
+      "SUBJECT_RESOLUTION_STARTED" | "SUBJECT_RESOLVED" | "SUBJECT_RESOLUTION_FAILED",
+  ): Promise<InvestigationSubject>;
 }

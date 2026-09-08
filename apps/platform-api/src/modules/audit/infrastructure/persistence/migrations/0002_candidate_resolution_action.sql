@@ -1,0 +1,15 @@
+-- migration-safety: allow-destructive ADR-013
+ALTER TABLE audit_events DROP CONSTRAINT audit_events_action_check;
+ALTER TABLE audit_events ADD CONSTRAINT audit_events_action_check CHECK (action IN (
+  'CASE_MEMBERSHIP_GRANTED', 'CASE_MEMBERSHIP_REVOKED', 'SENSITIVE_FIELD_VIEW',
+  'SENSITIVE_FIELD_MATCH', 'EVIDENCE_EXPORT_AUTHORIZATION',
+  'SOURCE_ACCESS_AUTHORIZATION', 'CANDIDATE_RESOLUTION'
+));
+
+ALTER TABLE audit_events DROP CONSTRAINT audit_events_resource_type_check;
+ALTER TABLE audit_events ADD CONSTRAINT audit_events_resource_type_check CHECK (
+  resource_type IN (
+    'WORKSPACE', 'CASE', 'INVESTIGATION', 'ENTITY', 'EVIDENCE', 'IDENTIFIER',
+    'EXPORT', 'GOVERNANCE', 'CANDIDATE'
+  )
+);

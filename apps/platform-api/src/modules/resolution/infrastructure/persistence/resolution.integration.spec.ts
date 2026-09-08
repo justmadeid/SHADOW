@@ -48,7 +48,7 @@ const verifier: AccessTokenVerifier = {
   },
 };
 
-describe("P2-005/P2-006/P2-007 Resolution HTTP and PostgreSQL", () => {
+describe("P2-005 through P2-008 Resolution HTTP and PostgreSQL", () => {
   let started: Awaited<ReturnType<typeof startPostgresTestContainer>>;
   let client: ReturnType<typeof createDatabaseClient>;
   let app: INestApplication;
@@ -82,6 +82,7 @@ describe("P2-005/P2-006/P2-007 Resolution HTTP and PostgreSQL", () => {
     client = createDatabaseClient({ databaseUrl: started.databaseUrl, maxPoolSize: 8 });
     for (const migration of [
       "../../../audit/infrastructure/persistence/migrations/0001_create_audit.sql",
+      "../../../audit/infrastructure/persistence/migrations/0002_candidate_resolution_action.sql",
       "../../../../platform/events/outbox/infrastructure/persistence/migrations/0001_create_platform_outbox.sql",
       "../../../workspace/infrastructure/persistence/migrations/0001_create_workspace.sql",
       "../../../entity/infrastructure/persistence/migrations/0001_create_entity_registry.sql",
@@ -90,11 +91,13 @@ describe("P2-005/P2-006/P2-007 Resolution HTTP and PostgreSQL", () => {
       "../../../investigation/infrastructure/persistence/migrations/0001_create_investigation.sql",
       "../../../subject/infrastructure/persistence/migrations/0001_create_subject.sql",
       "../../../subject/infrastructure/persistence/migrations/0002_create_subject_seed.sql",
+      "../../../subject/infrastructure/persistence/migrations/0003_subject_resolution.sql",
       "../../../governance/infrastructure/persistence/migrations/0001_create_governance.sql",
       "../../../governance/infrastructure/persistence/migrations/0002_case_membership.sql",
       "../../../governance/infrastructure/persistence/migrations/0003_subject_permissions.sql",
       "./migrations/0001_create_resolution.sql",
       "./migrations/0002_create_matching_signals.sql",
+      "./migrations/0003_atomic_candidate_resolution.sql",
     ])
       await client.db.execute(
         sql.raw(fs.readFileSync(new URL(migration, import.meta.url), "utf8")),
@@ -219,6 +222,273 @@ describe("P2-005/P2-006/P2-007 Resolution HTTP and PostgreSQL", () => {
     await expect(
       addCandidate(subject, session.id, key, { ...input, displayLabel: "Different" }),
     ).rejects.toMatchObject({ code: "CONFLICT_IDEMPOTENCY_KEY_REUSED" });
+  });
+
+  it("starts resolution and atomically creates a canonical Entity from a Candidate", async () => {
+    const original = await fixture();
+    const startKey = newUuid();
+    const startedResolution = await request(app.getHttpServer())
+      .post(`/api/v1/subjects/${original.id}/actions/start-resolution`)
+      .set("authorization", "Bearer owner")
+      .set("if-match", '"1"')
+      .set("idempotency-key", startKey)
+      .expect(202);
+    expect(startedResolution.body.subject).toMatchObject({
+      id: original.id,
+      status: "RESOLVING",
+      revision: 2,
+    });
+    expect(startedResolution.headers.location).toBe(
+      `/api/v1/resolutions/${startedResolution.body.resolution.id}`,
+    );
+    const startReplay = await request(app.getHttpServer())
+      .post(`/api/v1/subjects/${original.id}/actions/start-resolution`)
+      .set("authorization", "Bearer owner")
+      .set("if-match", '"1"')
+      .set("idempotency-key", startKey)
+      .expect(202);
+    expect(startReplay.body.resolution.id).toBe(startedResolution.body.resolution.id);
+
+    const added = await addCandidate(
+      original,
+      startedResolution.body.resolution.id,
+      newUuid(),
+      {
+        type: "PERSON",
+        displayLabel: "Synthetic Canonical Person",
+        classification: "SENSITIVE",
+        source: { origin: "INVESTIGATOR_INPUT", resource: null },
+      },
+    );
+    const key = newUuid();
+    const operationId = newUuid();
+    const decision = await request(app.getHttpServer())
+      .post(`/api/v1/candidates/${added.candidate.id}/actions/resolve`)
+      .set("authorization", "Bearer owner")
+      .set("if-match", '"1"')
+      .set("idempotency-key", key)
+      .set("x-audit-operation-id", operationId)
+      .send({ decision: "CREATE_NEW", reasonCode: "MANUAL_REVIEW" })
+      .expect(200);
+    expect(decision.body).toMatchObject({
+      candidate: { id: added.candidate.id, status: "RESOLVED", revision: 2 },
+      resolution: { status: "RESOLVED", revision: 3 },
+      subject: { status: "RESOLVED", revision: 3 },
+      decision: { decision: "CREATE_NEW", reasonCode: "MANUAL_REVIEW" },
+    });
+    expect(decision.body.subject.entityRef.id).toBe(
+      decision.body.decision.targetEntityId,
+    );
+    const replay = await request(app.getHttpServer())
+      .post(`/api/v1/candidates/${added.candidate.id}/actions/resolve`)
+      .set("authorization", "Bearer owner")
+      .set("if-match", '"1"')
+      .set("idempotency-key", key)
+      .set("x-audit-operation-id", operationId)
+      .send({ decision: "CREATE_NEW", reasonCode: "MANUAL_REVIEW" })
+      .expect(200);
+    expect(replay.body.decision.id).toBe(decision.body.decision.id);
+    await request(app.getHttpServer())
+      .post(`/api/v1/candidates/${added.candidate.id}/actions/resolve`)
+      .set("authorization", "Bearer owner")
+      .set("if-match", '"1"')
+      .set("idempotency-key", key)
+      .set("x-audit-operation-id", operationId)
+      .send({
+        decision: "CREATE_NEW",
+        reasonCode: "MULTIPLE_SUPPORTING_SIGNALS",
+      })
+      .expect(409);
+    expect(
+      (
+        await client.db.execute(sql`SELECT id FROM entities
+          WHERE workspace_id = ${original.workspaceId}
+            AND canonical_label = 'Synthetic Canonical Person'`)
+      ).rows,
+    ).toHaveLength(1);
+    expect(
+      (
+        await client.db.execute(sql`SELECT resource_type, resource_id FROM audit_events
+          WHERE operation_id = ${operationId} AND action = 'CANDIDATE_RESOLUTION'`)
+      ).rows,
+    ).toHaveLength(1);
+    expect(
+      (
+        await client.db.execute(sql`SELECT resource_type, resource_id FROM audit_events
+          WHERE operation_id = ${operationId} AND action = 'CANDIDATE_RESOLUTION'`)
+      ).rows[0],
+    ).toMatchObject({
+      resource_type: "CANDIDATE",
+      resource_id: added.candidate.id,
+    });
+  });
+
+  it("rolls back every resolution write when critical audit persistence fails", async () => {
+    const original = await fixture();
+    const start = await request(app.getHttpServer())
+      .post(`/api/v1/subjects/${original.id}/actions/start-resolution`)
+      .set("authorization", "Bearer owner")
+      .set("if-match", '"1"')
+      .set("idempotency-key", newUuid())
+      .expect(202);
+    const added = await addCandidate(original, start.body.resolution.id, newUuid(), {
+      type: "PERSON",
+      displayLabel: "Synthetic Rollback Person",
+      classification: "INTERNAL",
+      source: { origin: "INVESTIGATOR_INPUT", resource: null },
+    });
+    await client.db.execute(
+      sql.raw(
+        `CREATE FUNCTION fail_resolution_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action = 'CANDIDATE_RESOLUTION' THEN RAISE EXCEPTION 'synthetic-private-failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER fail_resolution_audit BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION fail_resolution_audit();`,
+      ),
+    );
+    const key = newUuid();
+    const operationId = newUuid();
+    try {
+      await request(app.getHttpServer())
+        .post(`/api/v1/candidates/${added.candidate.id}/actions/resolve`)
+        .set("authorization", "Bearer owner")
+        .set("if-match", '"1"')
+        .set("idempotency-key", key)
+        .set("x-audit-operation-id", operationId)
+        .send({ decision: "CREATE_NEW", reasonCode: "MANUAL_REVIEW" })
+        .expect(503);
+    } finally {
+      await client.db.execute(
+        sql.raw(
+          "DROP TRIGGER fail_resolution_audit ON audit_events; DROP FUNCTION fail_resolution_audit();",
+        ),
+      );
+    }
+    expect(await asOwner(() => subjects.get(original.id))).toMatchObject({
+      status: "RESOLVING",
+      revision: 2,
+      entityRef: null,
+    });
+    expect(await repository.findCandidate(added.candidate.id)).toMatchObject({
+      status: "PENDING_REVIEW",
+      revision: 1,
+    });
+    expect(await repository.findSession(start.body.resolution.id)).toMatchObject({
+      status: "NEEDS_REVIEW",
+      revision: 2,
+    });
+    expect(
+      (
+        await client.db.execute(sql`SELECT id FROM entities
+          WHERE canonical_label = 'Synthetic Rollback Person'`)
+      ).rows,
+    ).toHaveLength(0);
+    expect(
+      (
+        await client.db.execute(sql`SELECT id FROM resolution_decisions
+        WHERE candidate_id = ${added.candidate.id}`)
+      ).rows,
+    ).toHaveLength(0);
+
+    await request(app.getHttpServer())
+      .post(`/api/v1/candidates/${added.candidate.id}/actions/resolve`)
+      .set("authorization", "Bearer owner")
+      .set("if-match", '"1"')
+      .set("idempotency-key", key)
+      .set("x-audit-operation-id", operationId)
+      .send({ decision: "CREATE_NEW", reasonCode: "MANUAL_REVIEW" })
+      .expect(200);
+  });
+
+  it("links a compatible existing Entity and rejects restricted canonical creation", async () => {
+    const linkSubject = await fixture();
+    await grantWorkspaceManage(linkSubject.workspaceId);
+    const target = await createEntity(linkSubject.workspaceId, "PERSON");
+    const linkStart = await request(app.getHttpServer())
+      .post(`/api/v1/subjects/${linkSubject.id}/actions/start-resolution`)
+      .set("authorization", "Bearer owner")
+      .set("if-match", '"1"')
+      .set("idempotency-key", newUuid())
+      .expect(202);
+    const linkCandidate = await addCandidate(linkSubject, linkStart.body.resolution.id);
+    const linked = await request(app.getHttpServer())
+      .post(`/api/v1/candidates/${linkCandidate.candidate.id}/actions/resolve`)
+      .set("authorization", "Bearer owner")
+      .set("if-match", '"1"')
+      .set("idempotency-key", newUuid())
+      .set("x-audit-operation-id", newUuid())
+      .send({
+        decision: "LINK_EXISTING",
+        entityId: target.id,
+        reasonCode: "EXACT_IDENTIFIER_MATCH",
+      })
+      .expect(200);
+    expect(linked.body.subject.entityRef.id).toBe(target.id);
+
+    const restrictedSubject = await fixture();
+    const restrictedStart = await request(app.getHttpServer())
+      .post(`/api/v1/subjects/${restrictedSubject.id}/actions/start-resolution`)
+      .set("authorization", "Bearer owner")
+      .set("if-match", '"1"')
+      .set("idempotency-key", newUuid())
+      .expect(202);
+    const restricted = await addCandidate(
+      restrictedSubject,
+      restrictedStart.body.resolution.id,
+      newUuid(),
+      {
+        type: "PERSON",
+        displayLabel: null,
+        classification: "RESTRICTED",
+        source: { origin: "INVESTIGATOR_INPUT", resource: null },
+      },
+    );
+    await request(app.getHttpServer())
+      .post(`/api/v1/candidates/${restricted.candidate.id}/actions/resolve`)
+      .set("authorization", "Bearer owner")
+      .set("if-match", '"1"')
+      .set("idempotency-key", newUuid())
+      .set("x-audit-operation-id", newUuid())
+      .send({ decision: "CREATE_NEW", reasonCode: "MANUAL_REVIEW" })
+      .expect(409);
+    expect(await repository.findCandidate(restricted.candidate.id)).toMatchObject({
+      status: "PENDING_REVIEW",
+      revision: 1,
+    });
+  });
+
+  it("keeps resolving after REJECT and fails only after the last UNCERTAIN Candidate", async () => {
+    const original = await fixture();
+    const start = await request(app.getHttpServer())
+      .post(`/api/v1/subjects/${original.id}/actions/start-resolution`)
+      .set("authorization", "Bearer owner")
+      .set("if-match", '"1"')
+      .set("idempotency-key", newUuid())
+      .expect(202);
+    const first = await addCandidate(original, start.body.resolution.id);
+    const second = await addCandidate(original, start.body.resolution.id);
+    const rejected = await request(app.getHttpServer())
+      .post(`/api/v1/candidates/${first.candidate.id}/actions/resolve`)
+      .set("authorization", "Bearer owner")
+      .set("if-match", '"1"')
+      .set("idempotency-key", newUuid())
+      .set("x-audit-operation-id", newUuid())
+      .send({ decision: "REJECT", reasonCode: "NOT_SAME_IDENTITY" })
+      .expect(200);
+    expect(rejected.body).toMatchObject({
+      candidate: { status: "REJECTED" },
+      resolution: { status: "NEEDS_REVIEW" },
+      subject: { status: "RESOLVING", revision: 2 },
+    });
+    const uncertain = await request(app.getHttpServer())
+      .post(`/api/v1/candidates/${second.candidate.id}/actions/resolve`)
+      .set("authorization", "Bearer owner")
+      .set("if-match", '"1"')
+      .set("idempotency-key", newUuid())
+      .set("x-audit-operation-id", newUuid())
+      .send({ decision: "UNCERTAIN", reasonCode: "INSUFFICIENT_EVIDENCE" })
+      .expect(200);
+    expect(uncertain.body).toMatchObject({
+      candidate: { status: "UNCERTAIN" },
+      resolution: { status: "CLOSED" },
+      subject: { status: "RESOLUTION_FAILED", revision: 3 },
+    });
   });
 
   it("persists an idempotent explainable Entity match without restricted values", async () => {
@@ -721,11 +991,14 @@ describe("P2-005/P2-006/P2-007 Resolution HTTP and PostgreSQL", () => {
     await request(app.getHttpServer())
       .post(`/api/v1/subjects/${subject.id}/actions/start-resolution`)
       .set("authorization", "Bearer owner")
-      .expect(404);
+      .expect(400);
     await request(app.getHttpServer())
       .post(`/api/v1/candidates/${newUuid()}/actions/resolve`)
       .set("authorization", "Bearer owner")
-      .send({ decision: "CREATE_NEW" })
+      .set("if-match", '"1"')
+      .set("idempotency-key", newUuid())
+      .set("x-audit-operation-id", newUuid())
+      .send({ decision: "CREATE_NEW", reasonCode: "MANUAL_REVIEW" })
       .expect(404);
   });
 
@@ -786,9 +1059,9 @@ describe("P2-005/P2-006/P2-007 Resolution HTTP and PostgreSQL", () => {
     const decisionId = newUuid();
     await client.db.execute(sql`INSERT INTO resolution_decisions
       (id, resolution_session_id, candidate_id, decision, target_entity_id,
-       reason_code, decided_by_user_id, decided_at)
+       reason_code, decided_by_user_id, decided_at, workspace_id)
       VALUES (${decisionId}, ${session.id}, ${value.candidate.id}, 'REJECT', NULL,
-        'NOT_SAME_IDENTITY', 'owner', now())`);
+        'NOT_SAME_IDENTITY', 'owner', now(), ${subject.workspaceId})`);
     await expect(
       client.db.execute(
         sql`UPDATE resolution_decisions SET reason_code = 'MANUAL_REVIEW' WHERE id = ${decisionId}`,
@@ -856,17 +1129,20 @@ describe("P2-005/P2-006/P2-007 Resolution HTTP and PostgreSQL", () => {
 
   function createSession(subject: InvestigationSubject, key = newUuid()) {
     return asOwner(() =>
-      transactions.run(() =>
-        repository.createSession({
-          workspaceId: subject.workspaceId,
-          caseId: subject.caseId,
-          subjectId: subject.id,
-          actorUserId: "owner",
-          idempotencyKey: key,
-          requestHash: createHash("sha256")
-            .update(`${subject.workspaceId}:${subject.caseId}:${subject.id}`)
-            .digest("hex"),
-        }),
+      transactions.run(
+        async () =>
+          (
+            await repository.createSession({
+              workspaceId: subject.workspaceId,
+              caseId: subject.caseId,
+              subjectId: subject.id,
+              actorUserId: "owner",
+              idempotencyKey: key,
+              requestHash: createHash("sha256")
+                .update(`${subject.workspaceId}:${subject.caseId}:${subject.id}`)
+                .digest("hex"),
+            })
+          ).session,
       ),
     );
   }

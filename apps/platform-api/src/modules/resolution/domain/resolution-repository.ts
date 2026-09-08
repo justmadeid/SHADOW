@@ -1,4 +1,11 @@
-import type { Candidate, CandidateType, CreateCandidateInput } from "./candidate.js";
+import type {
+  Candidate,
+  CandidateType,
+  CreateCandidateInput,
+  ResolutionDecision,
+  ResolutionDecisionType,
+  ResolutionReasonCode,
+} from "./candidate.js";
 import type {
   CreateMatchSignalInput,
   EntityMatch,
@@ -8,6 +15,20 @@ import type { ResolutionSession } from "./resolution-session.js";
 
 export const RESOLUTION_REPOSITORY = Symbol("RESOLUTION_REPOSITORY");
 
+export type CandidateDecisionPreparation =
+  | {
+      replayed: true;
+      session: ResolutionSession;
+      candidate: Candidate;
+      decision: ResolutionDecision;
+    }
+  | {
+      replayed: false;
+      session: ResolutionSession;
+      candidate: Candidate;
+      remainingPendingCandidates: number;
+    };
+
 export interface ResolutionRepository {
   createSession(command: {
     workspaceId: string;
@@ -16,7 +37,7 @@ export interface ResolutionRepository {
     actorUserId: string;
     idempotencyKey: string;
     requestHash: string;
-  }): Promise<ResolutionSession>;
+  }): Promise<{ session: ResolutionSession; replayed: boolean }>;
   addCandidate(
     command: CreateCandidateInput & {
       resolutionSessionId: string;
@@ -36,6 +57,27 @@ export interface ResolutionRepository {
     limit: number,
     before?: string,
   ): Promise<Candidate[]>;
+  prepareCandidateDecision(command: {
+    candidateId: string;
+    actorUserId: string;
+    idempotencyKey: string;
+    requestHash: string;
+  }): Promise<CandidateDecisionPreparation>;
+  commitCandidateDecision(command: {
+    session: ResolutionSession;
+    candidate: Candidate;
+    remainingPendingCandidates: number;
+    decision: ResolutionDecisionType;
+    targetEntityId?: string | null;
+    reasonCode: ResolutionReasonCode;
+    actorUserId: string;
+    idempotencyKey: string;
+    requestHash: string;
+  }): Promise<{
+    session: ResolutionSession;
+    candidate: Candidate;
+    decision: ResolutionDecision;
+  }>;
   recordEntityMatch(command: {
     candidate: Candidate;
     entity: {

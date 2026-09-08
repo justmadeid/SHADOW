@@ -52,4 +52,22 @@ describe("Audit event input", () => {
     ).not.toThrow();
     expect(() => validateAuditInput({ ...sensitive, outcome: "SUCCEEDED" })).toThrow();
   });
+  it("accepts a controlled Candidate resolution audit reference", () => {
+    expect(() =>
+      validateAuditInput({
+        operationId: newUuid(),
+        action: "CANDIDATE_RESOLUTION",
+        outcome: "AUTHORIZED",
+        resource: {
+          type: "CANDIDATE",
+          id: newUuid(),
+          workspaceId: newUuid(),
+          caseId: newUuid(),
+        },
+        classification: "SENSITIVE",
+        reason: "MANUAL_REVIEW",
+        resourceRevision: 2,
+      }),
+    ).not.toThrow();
+  });
 });
