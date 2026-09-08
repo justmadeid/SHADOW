@@ -516,3 +516,56 @@ No database or worker deployment is required. Deploy the additive Platform API
 resume endpoint, rebuilt contracts/API client, and Platform Web after P2-008/P2-009
 are present. Rollback removes only the query/UI surfaces; canonical Subject,
 Resolution, Candidate, Entity and audit records remain intact.
+
+## P2-011 — Entity merge baseline implemented locally
+
+Owner: Entity Registry. The command extends the canonical Entity aggregate and does
+not introduce an alternate identity store.
+
+Implemented:
+
+- `POST /entities/{survivorEntityId}/actions/merge` with an explicit survivor,
+  absorbed Entity, controlled reason code, independent optimistic revisions,
+  idempotency key and critical-audit operation ID.
+- USER-only `WORKSPACE_MANAGE` authorization on both Entities. Cross-Workspace and
+  missing targets remain indistinguishable, and cross-type or inactive merges are
+  rejected.
+- One PostgreSQL transaction advances both Entity revisions, retains the absorbed
+  Entity as `MERGED`, records its `mergedInto` pointer, appends both revision
+  snapshots, stores an immutable merge decision, writes the critical Audit event and
+  enqueues one metadata-only `ENTITY_MERGED` Outbox event.
+- Actor-scoped exact replay returns the original decision without duplicate history,
+  Audit or Outbox records. Conflicting idempotency or audit-operation reuse is
+  rejected.
+- Canonical ID resolution continues through retained merged IDs. A bounded-depth
+  guard prevents the command from creating a chain beyond the supported resolver
+  limit.
+- No destructive delete and no implicit alias, Identifier, Case or Knowledge
+  transfer. Those records stay attributable to their original Entity in this
+  baseline.
+
+### Deferred integration
+
+P2-012 owns the reverse/split design hook and must preserve the immutable merge
+decision rather than rewriting history. P5-010 owns ECHO Entity merge review UI.
+
+## P2-011 validation (2026-09-08)
+
+- Full `m0:static` passed: 219 unit tests, 20 contract tests, architecture (198
+  source files), 6 boundary tests, dependency graph, formatting, lint, typecheck,
+  validation of 19 migrations, OpenAPI lint and all 15 production builds.
+- Full PostgreSQL/HTTP integration passed 104 tests. Fifteen Entity scenarios cover
+  merge success and exact replay, incompatible and unauthorized requests, optimistic
+  revisions, concurrent decisions, immutable history, metadata-only Outbox, critical
+  Audit, canonical ID resolution, chain bounds and full rollback when Audit
+  persistence fails.
+- All 26 SHADOW/ECHO Playwright regression tests passed. Production dependency audit
+  reports no known vulnerabilities and Gitleaks reports no leaks. Tests use synthetic
+  identities only.
+
+## P2-011 deployment note
+
+Apply Entity migration `0003_entity_merge_baseline.sql` and Audit migration
+`0003_entity_merge_action.sql` before deploying the Platform API. Application
+rollback leaves the append-only merge decision, revisions, audit record and Outbox
+event intact; no automatic reverse merge is attempted.

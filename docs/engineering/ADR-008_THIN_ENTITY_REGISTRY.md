@@ -27,9 +27,9 @@ Entity type and Workspace are immutable. Canonical labels and aliases are normal
 with NFKC, bounded and control-character free. Alias equality is case-insensitive.
 Renaming retains the previous canonical label as an append-only alias; adding an
 existing/canonical alias conflicts. Archive is terminal in this slice. The schema can
-represent MERGED and the trusted resolver follows a bounded merge chain, but public
-merge mutation is prohibited until P2-011 can persist the critical Audit decision and
-survivor semantics atomically.
+represent `MERGED` and the trusted resolver follows a bounded merge chain. P2-011
+activates only the dedicated, transactional survivor command specified by ADR-015;
+generic Entity update remains unable to create merge state.
 
 Writes use optimistic revision checks. Creation is actor/idempotency-key serialized;
 replay compares the immutable revision-one label/type and revision-one aliases instead

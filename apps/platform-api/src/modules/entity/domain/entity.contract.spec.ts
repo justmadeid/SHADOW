@@ -1,6 +1,11 @@
+import fs from "node:fs";
 import { describe, expect, it } from "vitest";
 import { createEntity } from "./entity.js";
-import { parseCreateEntity, parseUpdateEntity } from "./entity-input.js";
+import {
+  parseCreateEntity,
+  parseMergeEntity,
+  parseUpdateEntity,
+} from "./entity-input.js";
 
 describe("Entity public contract", () => {
   it("accepts identity-only creation fields", () => {
@@ -73,5 +78,39 @@ describe("Entity public contract", () => {
         "updatedAt",
       ].sort(),
     );
+  });
+
+  it("accepts only a bounded merge command and exposes its OpenAPI operation", () => {
+    const absorbedEntityId = "01900000-0000-7000-8000-000000000009";
+    expect(
+      parseMergeEntity({
+        absorbedEntityId,
+        absorbedRevision: 3,
+        reasonCode: "DUPLICATE_IDENTITY",
+      }),
+    ).toEqual({
+      absorbedEntityId,
+      absorbedRevision: 3,
+      reasonCode: "DUPLICATE_IDENTITY",
+    });
+    for (const input of [
+      {},
+      { absorbedEntityId: "invalid", absorbedRevision: 1, reasonCode: "MANUAL_REVIEW" },
+      { absorbedEntityId, absorbedRevision: 0, reasonCode: "MANUAL_REVIEW" },
+      { absorbedEntityId, absorbedRevision: 1, reasonCode: "FREE_TEXT" },
+      {
+        absorbedEntityId,
+        absorbedRevision: 1,
+        reasonCode: "MANUAL_REVIEW",
+        canonicalLabel: "Injected",
+      },
+    ])
+      expect(() => parseMergeEntity(input)).toThrow();
+    const contract = fs.readFileSync(
+      new URL("../../../../../../docs/contracts/platform-api-v1.yaml", import.meta.url),
+      "utf8",
+    );
+    expect(contract).toContain("operationId: mergeEntity");
+    expect(contract).toContain('$ref: "#/components/schemas/EntityMergeDecision"');
   });
 });

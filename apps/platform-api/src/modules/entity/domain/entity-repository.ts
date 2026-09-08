@@ -1,4 +1,10 @@
-import type { CreateEntityInput, Entity, UpdateEntityInput } from "./entity.js";
+import type {
+  CreateEntityInput,
+  Entity,
+  EntityMergeDecision,
+  EntityMergeReasonCode,
+  UpdateEntityInput,
+} from "./entity.js";
 
 export const ENTITY_REPOSITORY = Symbol("ENTITY_REPOSITORY");
 
@@ -15,4 +21,16 @@ export interface EntityRepository {
   findManyForUpdate(ids: readonly string[]): Promise<Entity[]>;
   list(workspaceId: string, limit: number, before?: string): Promise<Entity[]>;
   update(current: Entity, input: UpdateEntityInput, actorUserId: string): Promise<Entity>;
+  merge(command: {
+    workspaceId: string;
+    survivorEntityId: string;
+    absorbedEntityId: string;
+    survivorRevision: number;
+    absorbedRevision: number;
+    reasonCode: EntityMergeReasonCode;
+    actorUserId: string;
+    idempotencyKey: string;
+    requestHash: string;
+    operationId: string;
+  }): Promise<{ decision: EntityMergeDecision; replayed: boolean }>;
 }

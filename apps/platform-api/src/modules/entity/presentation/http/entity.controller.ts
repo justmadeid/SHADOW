@@ -16,7 +16,11 @@ import { AppError } from "../../../../platform/errors/index.js";
 import { etagForRevision, parseIfMatchRevision } from "../../../../platform/http/etag.js";
 import { parseIdempotencyKey } from "../../../../platform/http/idempotency.js";
 import { EntityFacade } from "../../application/entity.facade.js";
-import { parseCreateEntity, parseUpdateEntity } from "../../domain/entity-input.js";
+import {
+  parseCreateEntity,
+  parseMergeEntity,
+  parseUpdateEntity,
+} from "../../domain/entity-input.js";
 
 @Controller("api/v1")
 export class EntityController {
@@ -92,6 +96,39 @@ export class EntityController {
       revision,
     );
     response.setHeader("etag", etagForRevision(value.revision));
+    return value;
+  }
+
+  @Post("entities/:survivorEntityId/actions/merge")
+  async merge(
+    @Param("survivorEntityId") survivorEntityId: string,
+    @Body() body: unknown,
+    @Headers("if-match") ifMatch: string | undefined,
+    @Headers("idempotency-key") key: string | undefined,
+    @Headers("x-audit-operation-id") operationId: string | undefined,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const revision = parseIfMatchRevision(ifMatch);
+    if (revision === undefined)
+      throw new AppError({
+        code: "VALIDATION_IF_MATCH_REQUIRED",
+        message: "If-Match is required for the survivor Entity.",
+        statusCode: 400,
+      });
+    if (!operationId)
+      throw new AppError({
+        code: "VALIDATION_AUDIT_OPERATION_ID_REQUIRED",
+        message: "X-Audit-Operation-Id is required for Entity merge.",
+        statusCode: 400,
+      });
+    const value = await this.entities.merge(
+      id(survivorEntityId),
+      parseMergeEntity(body),
+      revision,
+      parseIdempotencyKey(key, { required: true })!,
+      id(operationId),
+    );
+    response.status(201).setHeader("etag", etagForRevision(value.survivorRevision));
     return value;
   }
 }
