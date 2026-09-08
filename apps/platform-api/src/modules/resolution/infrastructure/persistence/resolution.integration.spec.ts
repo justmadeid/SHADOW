@@ -11,7 +11,8 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import request from "supertest";
 import type { Logger } from "pino";
 import { CaseFacade } from "../../../case/index.js";
-import { EntityFacade } from "../../../entity/index.js";
+import { EntityFacade, IdentifierFacade } from "../../../entity/index.js";
+import type { Permission } from "../../../governance/index.js";
 import { SubjectFacade } from "../../../subject/index.js";
 import { WorkspaceFacade } from "../../../workspace/index.js";
 import { PLATFORM_DB_CLIENT } from "../../../../platform/database/database.module.js";
@@ -47,7 +48,7 @@ const verifier: AccessTokenVerifier = {
   },
 };
 
-describe("P2-005/P2-006 Resolution HTTP and PostgreSQL", () => {
+describe("P2-005/P2-006/P2-007 Resolution HTTP and PostgreSQL", () => {
   let started: Awaited<ReturnType<typeof startPostgresTestContainer>>;
   let client: ReturnType<typeof createDatabaseClient>;
   let app: INestApplication;
@@ -57,11 +58,27 @@ describe("P2-005/P2-006 Resolution HTTP and PostgreSQL", () => {
   let workspaces: WorkspaceFacade;
   let cases: CaseFacade;
   let entities: EntityFacade;
+  let identifiers: IdentifierFacade;
   let subjects: SubjectFacade;
   let matches: ResolutionMatchFacade;
 
   beforeAll(async () => {
     started = await startPostgresTestContainer();
+    vi.stubEnv("APP_ENV", "test");
+    vi.stubEnv("DATABASE_URL", started.databaseUrl);
+    vi.stubEnv("OIDC_ISSUER", "https://identity.example.test");
+    vi.stubEnv("OIDC_AUDIENCE", "platform-api-test");
+    vi.stubEnv("OIDC_JWKS_URI", "https://identity.example.test/.well-known/jwks.json");
+    vi.stubEnv("IDENTIFIER_ENCRYPTION_KEY_ID", "test-encryption-v1");
+    vi.stubEnv(
+      "IDENTIFIER_ENCRYPTION_KEY_BASE64",
+      Buffer.alloc(32, 1).toString("base64"),
+    );
+    vi.stubEnv("IDENTIFIER_FINGERPRINT_KEY_ID", "test-fingerprint-v1");
+    vi.stubEnv(
+      "IDENTIFIER_FINGERPRINT_KEY_BASE64",
+      Buffer.alloc(32, 2).toString("base64"),
+    );
     client = createDatabaseClient({ databaseUrl: started.databaseUrl, maxPoolSize: 8 });
     for (const migration of [
       "../../../audit/infrastructure/persistence/migrations/0001_create_audit.sql",
@@ -99,6 +116,7 @@ describe("P2-005/P2-006 Resolution HTTP and PostgreSQL", () => {
     workspaces = module.get(WorkspaceFacade);
     cases = module.get(CaseFacade);
     entities = module.get(EntityFacade);
+    identifiers = module.get(IdentifierFacade);
     subjects = module.get(SubjectFacade);
     matches = module.get(ResolutionMatchFacade);
     app = module.createNestApplication();
@@ -112,6 +130,7 @@ describe("P2-005/P2-006 Resolution HTTP and PostgreSQL", () => {
     await app?.close();
     await client?.pool.end();
     await started?.container.stop();
+    vi.unstubAllEnvs();
   });
 
   it("persists an idempotent review session and metadata-only Outbox event", async () => {
@@ -267,6 +286,199 @@ describe("P2-005/P2-006 Resolution HTTP and PostgreSQL", () => {
     expect(JSON.stringify(event.rows)).not.toContain(entity.id);
   });
 
+  it("returns governance-filtered match pages without leaking protected or cross-Case context", async () => {
+    const subject = await fixture();
+    const session = await createSession(subject);
+    const { candidate } = await addCandidate(subject, session.id);
+    const entity = await createEntity(subject.workspaceId, "PERSON");
+    await asOwner(() =>
+      matches.record({
+        candidateId: candidate.id,
+        entityId: entity.id,
+        matchLevel: "HIGH",
+        signals: [
+          {
+            kind: "MATCHING",
+            field: "NATIONAL_ID",
+            result: "EXACT_MATCH",
+            strength: "STRONG",
+            classification: "RESTRICTED",
+            valueVisibility: "MATCH_ONLY",
+          },
+          {
+            kind: "MATCHING",
+            field: "NAME",
+            result: "PARTIAL_MATCH",
+            strength: "SUPPORTING",
+            classification: "INTERNAL",
+            valueVisibility: "FULL",
+          },
+        ],
+        producerType: "SERVICE",
+        producerId: "synthetic-matcher",
+        idempotencyKey: newUuid(),
+      }),
+    );
+
+    const existenceOnly = (await get(`/resolutions/${session.id}/matches`).expect(200))
+      .body;
+    expect(existenceOnly).toMatchObject({
+      items: [
+        {
+          candidateId: candidate.id,
+          entityRef: { id: entity.id },
+          signals: [{ field: "NAME" }],
+          crossCaseContext: { exists: true, detailsVisible: false },
+        },
+      ],
+      page: { hasMore: false, nextCursor: null },
+    });
+    expect(JSON.stringify(existenceOnly)).not.toContain("NATIONAL_ID");
+    expect(JSON.stringify(existenceOnly)).not.toContain("classification");
+    expect(JSON.stringify(existenceOnly)).not.toContain("caseId");
+
+    const protectedGrantId = await grantPermissions(subject.workspaceId, "owner", [
+      "IDENTIFIER_USE_RESTRICTED",
+      "VIEW_CROSS_CASE_CONTEXT",
+    ]);
+    const failedOperationId = newUuid();
+    await client.db.execute(
+      sql.raw(
+        `CREATE FUNCTION fail_match_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action = 'SENSITIVE_FIELD_MATCH' THEN RAISE EXCEPTION 'synthetic-private-failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER fail_match_audit BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION fail_match_audit();`,
+      ),
+    );
+    try {
+      await get(`/resolutions/${session.id}/matches`)
+        .set("x-reason-for-access", "DUPLICATE_REVIEW")
+        .set("x-audit-operation-id", failedOperationId)
+        .expect(503);
+    } finally {
+      await client.db.execute(
+        sql.raw(
+          "DROP TRIGGER fail_match_audit ON audit_events; DROP FUNCTION fail_match_audit();",
+        ),
+      );
+    }
+    expect(
+      (
+        await client.db.execute(
+          sql`SELECT id FROM audit_events WHERE operation_id = ${failedOperationId}`,
+        )
+      ).rows,
+    ).toHaveLength(0);
+
+    const operationId = newUuid();
+    const protectedView = (
+      await get(`/resolutions/${session.id}/matches`)
+        .set("x-reason-for-access", "DUPLICATE_REVIEW")
+        .set("x-audit-operation-id", operationId)
+        .expect(200)
+    ).body;
+    expect(protectedView.items[0]).toMatchObject({
+      signals: [{ field: "NATIONAL_ID" }, { field: "NAME" }],
+      crossCaseContext: { exists: true, detailsVisible: true },
+    });
+    const audit = await client.db.execute(sql`SELECT action, outcome, resource_type,
+      resource_id, reason, classification
+      FROM audit_events WHERE operation_id = ${operationId}`);
+    expect(audit.rows).toEqual([
+      expect.objectContaining({
+        action: "SENSITIVE_FIELD_MATCH",
+        outcome: "AUTHORIZED",
+        resource_type: "CASE",
+        resource_id: subject.caseId,
+        reason: "DUPLICATE_REVIEW",
+        classification: "RESTRICTED",
+      }),
+    ]);
+
+    await client.db.execute(sql`UPDATE governance_role_assignments
+      SET status = 'REVOKED', revision = revision + 1, revoked_at = now()
+      WHERE id = ${protectedGrantId}`);
+    const revokedOperationId = newUuid();
+    const afterRevocation = (
+      await get(`/resolutions/${session.id}/matches`)
+        .set("x-reason-for-access", "DUPLICATE_REVIEW")
+        .set("x-audit-operation-id", revokedOperationId)
+        .expect(200)
+    ).body;
+    expect(afterRevocation.items[0]).toMatchObject({
+      signals: [{ field: "NAME" }],
+      crossCaseContext: { exists: true, detailsVisible: false },
+    });
+    expect(
+      (
+        await client.db.execute(
+          sql`SELECT id FROM audit_events WHERE operation_id = ${revokedOperationId}`,
+        )
+      ).rows,
+    ).toHaveLength(0);
+  });
+
+  it("queries protected Identifier fingerprints without exposing values or other Cases", async () => {
+    const subject = await fixture();
+    const entity = await createEntity(subject.workspaceId, "PERSON");
+    const rawIdentifier = "3174010101010001";
+    await asOwner(() =>
+      identifiers.create(
+        entity.id,
+        {
+          type: "NATIONAL_ID",
+          value: rawIdentifier,
+          classification: "RESTRICTED",
+        },
+        newUuid(),
+      ),
+    );
+    await grantPermissions(subject.workspaceId, "owner", ["IDENTIFIER_USE_RESTRICTED"]);
+    const operationId = newUuid();
+    const result = await asOwner(() =>
+      identifiers.matchExact({
+        workspaceId: subject.workspaceId,
+        caseId: subject.caseId,
+        type: "NATIONAL_ID",
+        value: rawIdentifier,
+        reasonForAccess: "IDENTITY_VERIFICATION",
+        operationId,
+      }),
+    );
+    expect(result).toEqual([
+      expect.objectContaining({
+        entityId: entity.id,
+        workspaceId: subject.workspaceId,
+        entityType: "PERSON",
+      }),
+    ]);
+    expect(JSON.stringify(result)).not.toContain(rawIdentifier);
+    expect(JSON.stringify(result)).not.toContain("fingerprint");
+    const durable = await client.db.execute(
+      sql`SELECT id FROM audit_events WHERE operation_id = ${operationId}`,
+    );
+    expect(durable.rows).toHaveLength(1);
+    expect(
+      JSON.stringify(
+        (
+          await client.db.execute(sql`SELECT payload FROM platform_outbox_events
+            WHERE aggregate_type = 'AUDIT_EVENT' AND aggregate_id = ${durable.rows[0]!.id}`)
+        ).rows,
+      ),
+    ).not.toContain(rawIdentifier);
+
+    const other = await fixture();
+    await expect(
+      asOwner(() =>
+        identifiers.matchExact({
+          workspaceId: other.workspaceId,
+          caseId: subject.caseId,
+          type: "NATIONAL_ID",
+          value: rawIdentifier,
+          reasonForAccess: "IDENTITY_VERIFICATION",
+          operationId: newUuid(),
+        }),
+      ),
+    ).rejects.toMatchObject({ code: "ACCESS_DENIED" });
+  });
+
   it("stores RESTRICTED Candidates only with a fixed non-identifying label", async () => {
     const subject = await fixture();
     const session = await createSession(subject);
@@ -399,6 +611,7 @@ describe("P2-005/P2-006 Resolution HTTP and PostgreSQL", () => {
     );
     await get(`/resolutions/${session.id}`, "viewer").expect(200);
     await get(`/candidates/${value.candidate.id}`, "viewer").expect(200);
+    await get(`/resolutions/${session.id}/matches`, "viewer").expect(403);
     await asOwner(() =>
       cases.removeMember(
         subject.caseId,
@@ -431,6 +644,48 @@ describe("P2-005/P2-006 Resolution HTTP and PostgreSQL", () => {
     ).expect(400);
     await get(`/resolutions/${session.id}/candidates?limit=101`).expect(400);
     await get(`/resolutions/${session.id}/candidates?workspaceId=${newUuid()}`).expect(
+      400,
+    );
+
+    const { candidate } = await addCandidate(subject, session.id);
+    for (let index = 0; index < 2; index += 1) {
+      const entity = await createEntity(subject.workspaceId, "PERSON");
+      await asOwner(() =>
+        matches.record({
+          candidateId: candidate.id,
+          entityId: entity.id,
+          matchLevel: "LOW",
+          signals: [
+            {
+              kind: "MATCHING",
+              field: "NAME",
+              result: "PARTIAL_MATCH",
+              strength: "WEAK",
+              classification: "INTERNAL",
+              valueVisibility: "FULL",
+            },
+          ],
+          producerType: "SERVICE",
+          producerId: "synthetic-matcher",
+          idempotencyKey: newUuid(),
+        }),
+      );
+    }
+    const matchPage = (
+      await get(`/resolutions/${session.id}/matches?limit=1`).expect(200)
+    ).body;
+    expect(matchPage).toMatchObject({ page: { hasMore: true } });
+    const nextMatchPage = (
+      await get(
+        `/resolutions/${session.id}/matches?limit=1&cursor=${matchPage.page.nextCursor}`,
+      ).expect(200)
+    ).body;
+    expect(nextMatchPage.items[0].id).not.toBe(matchPage.items[0].id);
+    await get(
+      `/resolutions/${other.id}/matches?cursor=${matchPage.page.nextCursor}`,
+    ).expect(400);
+    await get(`/resolutions/${session.id}/matches?limit=101`).expect(400);
+    await get(`/resolutions/${session.id}/matches?candidateId=${candidate.id}`).expect(
       400,
     );
   });
@@ -667,20 +922,35 @@ describe("P2-005/P2-006 Resolution HTTP and PostgreSQL", () => {
   }
 
   async function grantWorkspaceManage(workspaceId: string) {
+    await grantPermissions(workspaceId, "owner", [
+      "WORKSPACE_VIEW",
+      "WORKSPACE_MANAGE",
+      "DISCOVER_ENTITY_EXISTENCE",
+    ]);
+  }
+
+  async function grantPermissions(
+    workspaceId: string,
+    userId: string,
+    permissions: readonly Permission[],
+  ) {
     const roleId = newUuid();
+    const roleKey = `P2_007_${newUuid().replaceAll("-", "_").toUpperCase()}`;
     await client.db.execute(sql`INSERT INTO governance_roles
       (id, workspace_id, key, name, status, revision, created_at, updated_at)
-      VALUES (${roleId}, ${workspaceId}, 'RESOLUTION_OWNER',
-        'Resolution synthetic owner', 'ACTIVE', 1, now(), now())`);
-    for (const permission of ["WORKSPACE_VIEW", "WORKSPACE_MANAGE"])
+      VALUES (${roleId}, ${workspaceId}, ${roleKey},
+        'Resolution synthetic role', 'ACTIVE', 1, now(), now())`);
+    for (const permission of permissions)
       await client.db.execute(sql`INSERT INTO governance_role_permissions
         (role_id, permission) VALUES (${roleId}, ${permission})`);
+    const assignmentId = newUuid();
     await client.db.execute(sql`INSERT INTO governance_role_assignments
       (id, workspace_id, role_id, subject_type, subject_id, scope_type,
        scope_resource_type, scope_resource_id, status, revision,
        granted_by_subject_type, granted_by_subject_id, granted_at, case_membership)
-      VALUES (${newUuid()}, ${workspaceId}, ${roleId}, 'USER', 'owner',
+      VALUES (${assignmentId}, ${workspaceId}, ${roleId}, 'USER', ${userId},
         'WORKSPACE', null, null, 'ACTIVE', 1, 'USER', 'owner', now(), false)`);
+    return assignmentId;
   }
 
   function get(path: string, user = "owner") {

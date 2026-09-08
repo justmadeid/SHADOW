@@ -55,5 +55,6 @@ export interface ResolutionRepository {
     resolutionSessionId: string,
     limit: number,
     before?: string,
+    includeProtected?: boolean,
   ): Promise<EntityMatch[]>;
 }

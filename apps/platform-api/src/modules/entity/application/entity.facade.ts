@@ -120,25 +120,66 @@ export class EntityFacade {
 
   /** Trusted resolution port. Merged-chain creation is deferred to P2-011. */
   async resolve(workspaceId: string, entityId: string) {
-    let id = entityId;
-    const visited = new Set<string>();
+    return (await this.resolveMany(workspaceId, [entityId])).get(entityId) ?? null;
+  }
+
+  /** Bounded batch resolver prevents match-page reads from becoming N+1 queries. */
+  async resolveMany(workspaceId: string, entityIds: readonly string[]) {
+    const states = new Map(
+      [...new Set(entityIds)]
+        .slice(0, 100)
+        .map((requestedId) => [
+          requestedId,
+          { currentId: requestedId, visited: new Set<string>() },
+        ]),
+    );
+    const resolved = new Map<
+      string,
+      {
+        id: string;
+        workspaceId: string;
+        type: Entity["type"];
+        status: "ACTIVE";
+        revision: number;
+      }
+    >();
     for (let depth = 0; depth < 16; depth += 1) {
-      if (visited.has(id)) return null;
-      visited.add(id);
-      const entity = await this.repository.find(id);
-      if (!entity || entity.workspaceId !== workspaceId) return null;
-      if (entity.status === "ACTIVE")
-        return {
-          id: entity.id,
-          workspaceId: entity.workspaceId,
-          type: entity.type,
-          status: "ACTIVE" as const,
-          revision: entity.revision,
-        };
-      if (entity.status !== "MERGED" || !entity.mergedInto) return null;
-      id = entity.mergedInto.id;
+      const pending = [...states.entries()].filter(([id]) => !resolved.has(id));
+      if (pending.length === 0) break;
+      const entities = new Map(
+        (await this.repository.findMany(pending.map(([, state]) => state.currentId))).map(
+          (entity) => [entity.id, entity],
+        ),
+      );
+      for (const [requestedId, state] of pending) {
+        if (state.visited.has(state.currentId)) {
+          states.delete(requestedId);
+          continue;
+        }
+        state.visited.add(state.currentId);
+        const entity = entities.get(state.currentId);
+        if (!entity || entity.workspaceId !== workspaceId) {
+          states.delete(requestedId);
+          continue;
+        }
+        if (entity.status === "ACTIVE") {
+          resolved.set(requestedId, {
+            id: entity.id,
+            workspaceId: entity.workspaceId,
+            type: entity.type,
+            status: "ACTIVE" as const,
+            revision: entity.revision,
+          });
+          continue;
+        }
+        if (entity.status !== "MERGED" || !entity.mergedInto) {
+          states.delete(requestedId);
+          continue;
+        }
+        state.currentId = entity.mergedInto.id;
+      }
     }
-    return null;
+    return resolved;
   }
 
   private async authorizeWorkspace(

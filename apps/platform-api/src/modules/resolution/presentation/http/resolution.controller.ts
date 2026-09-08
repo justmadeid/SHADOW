@@ -1,4 +1,4 @@
-import { Controller, Get, Inject, Param, Query, Res } from "@nestjs/common";
+import { Controller, Get, Headers, Inject, Param, Query, Res } from "@nestjs/common";
 import type { Response } from "express";
 import { isResourceId } from "@intelligence/contracts";
 import { AppError } from "../../../../platform/errors/index.js";
@@ -39,6 +39,37 @@ export class ResolutionController {
       id(resolutionId),
       query.limit === undefined ? 50 : Number(query.limit),
       query.cursor as string | undefined,
+    );
+  }
+
+  @Get("resolutions/:resolutionId/matches")
+  async listMatches(
+    @Param("resolutionId") resolutionId: string,
+    @Query() query: Record<string, unknown>,
+    @Headers("x-reason-for-access") reasonForAccess: string | undefined,
+    @Headers("x-audit-operation-id") operationId: string | undefined,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    if (
+      Object.keys(query).some((key) => !["cursor", "limit"].includes(key)) ||
+      (query.cursor !== undefined && typeof query.cursor !== "string") ||
+      (query.limit !== undefined &&
+        (typeof query.limit !== "string" || !/^[1-9][0-9]{0,2}$/.test(query.limit)))
+    )
+      throw new AppError({
+        code: "VALIDATION_ENTITY_MATCH_QUERY_INVALID",
+        message: "Entity match query is invalid.",
+        statusCode: 400,
+      });
+    response.setHeader("cache-control", "private, no-store");
+    return this.resolutions.listMatches(
+      id(resolutionId),
+      query.limit === undefined ? 50 : Number(query.limit),
+      query.cursor as string | undefined,
+      {
+        ...(reasonForAccess === undefined ? {} : { reasonForAccess }),
+        ...(operationId === undefined ? {} : { operationId }),
+      },
     );
   }
 

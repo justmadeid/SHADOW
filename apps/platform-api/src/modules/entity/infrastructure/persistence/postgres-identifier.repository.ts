@@ -146,6 +146,38 @@ export class PostgresIdentifierRepository implements IdentifierRepository {
     return (result.rows as IdentifierRow[]).map(mapIdentifier);
   }
 
+  async findExactMatches(
+    input: Parameters<IdentifierRepository["findExactMatches"]>[0],
+  ): ReturnType<IdentifierRepository["findExactMatches"]> {
+    const bound = Math.max(1, Math.min(100, Math.floor(input.limit)));
+    const fingerprint = this.protection.fingerprint(
+      input.workspaceId,
+      input.type,
+      input.normalizedValue,
+    );
+    const result = await this.database.connection().execute(sql`SELECT
+      e.id AS entity_id, e.workspace_id, e.entity_type, e.revision AS entity_revision,
+      i.classification
+      FROM entity_identifiers i
+      INNER JOIN entities e ON e.id = i.entity_id AND e.workspace_id = i.workspace_id
+      WHERE i.workspace_id = ${input.workspaceId}
+        AND i.identifier_type = ${input.type}
+        AND i.status = 'ACTIVE'
+        AND e.status = 'ACTIVE'
+        AND i.comparison_fingerprint = ${fingerprint.value}
+        AND i.fingerprint_key_id = ${fingerprint.keyId}
+        AND i.fingerprint_algorithm = 'HMAC-SHA-256'
+        AND i.normalization_version = 1
+      ORDER BY e.id LIMIT ${bound}`);
+    return (result.rows as ExactMatchRow[]).map((row) => ({
+      entityId: row.entity_id,
+      workspaceId: row.workspace_id,
+      entityType: row.entity_type,
+      entityRevision: Number(row.entity_revision),
+      classification: row.classification,
+    }));
+  }
+
   async reveal(id: string): Promise<string> {
     const stored = await this.findStored(id);
     if (!stored) notFound();
@@ -200,6 +232,13 @@ type StoredIdentifierRow = IdentifierRow & {
   fingerprint_key_id: string;
   fingerprint_algorithm: ProtectedIdentifierValue["fingerprintAlgorithm"];
   normalization_version: ProtectedIdentifierValue["normalizationVersion"];
+};
+type ExactMatchRow = {
+  entity_id: string;
+  workspace_id: string;
+  entity_type: import("../../domain/entity.js").EntityType;
+  entity_revision: number;
+  classification: DataClassification;
 };
 
 function mapIdentifier(row: IdentifierRow): EntityIdentifier {

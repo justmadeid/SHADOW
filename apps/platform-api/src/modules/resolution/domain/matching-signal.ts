@@ -81,6 +81,24 @@ export type EntityMatch = Readonly<{
   createdAt: string;
 }>;
 
+export type MatchSignalView = Readonly<{
+  field: MatchSignalField;
+  result: MatchSignalResult;
+  strength: MatchSignalStrength;
+  valueVisibility: FieldVisibility;
+}>;
+
+export type EntityMatchView = Readonly<{
+  id: string;
+  candidateId: string;
+  entityRef: EntityRef;
+  matchLevel: MatchLevel;
+  signals: readonly MatchSignalView[];
+  conflicts: readonly MatchSignalView[];
+  crossCaseContext: Readonly<{ exists: true; detailsVisible: boolean }>;
+  createdAt: string;
+}>;
+
 export type CreateEntityMatchInput = Readonly<{
   id: string;
   candidate: Candidate;
@@ -183,6 +201,38 @@ export function presentEntityMatch(
   });
 }
 
+/** Public P2-007 projection; protected signal use is a distinct permission. */
+export function presentEntityMatchView(
+  value: EntityMatch,
+  access: {
+    canDiscoverEntity: boolean;
+    canUseProtectedSignals: boolean;
+    canViewCrossCaseContext: boolean;
+  },
+): EntityMatchView | null {
+  if (!access.canDiscoverEntity) return null;
+  const visible = (signal: MatchingSignal) =>
+    signal.valueVisibility !== "HIDDEN" &&
+    (access.canUseProtectedSignals ||
+      !["SENSITIVE", "RESTRICTED"].includes(signal.classification));
+  const signals = value.signals.filter(visible).map(signalView);
+  const conflicts = value.conflicts.filter(visible).map(signalView);
+  if (signals.length === 0 && conflicts.length === 0) return null;
+  return Object.freeze({
+    id: value.id,
+    candidateId: value.candidateId,
+    entityRef: Object.freeze({ ...value.entityRef }),
+    matchLevel: value.matchLevel,
+    signals: Object.freeze(signals),
+    conflicts: Object.freeze(conflicts),
+    crossCaseContext: Object.freeze({
+      exists: true as const,
+      detailsVisible: access.canViewCrossCaseContext,
+    }),
+    createdAt: value.createdAt,
+  });
+}
+
 function createSignal(
   entityMatchId: string,
   input: CreateMatchSignalInput & { id: string },
@@ -220,6 +270,15 @@ function createSignal(
     classification: input.classification,
     valueVisibility: input.valueVisibility,
     createdAt,
+  });
+}
+
+function signalView(value: MatchingSignal): MatchSignalView {
+  return Object.freeze({
+    field: value.field,
+    result: value.result,
+    strength: value.strength,
+    valueVisibility: value.valueVisibility,
   });
 }
 

@@ -474,6 +474,60 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/UserPrincipalRequired" }
         "404": { $ref: "#/components/responses/ResolutionError" }
+  /resolutions/{resolutionId}/matches:
+    parameters:
+      - name: resolutionId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: listResolutionEntityMatches
+      summary: List governance-filtered possible Entity matches
+      tags: [Resolution]
+      description: >-
+        Requires current SUBJECT_VIEW and DISCOVER_ENTITY_EXISTENCE in the containing
+        Case context. The result reveals reusable Workspace Entity existence without
+        any other Case name, Evidence, Finding or context. SENSITIVE/RESTRICTED
+        MATCH_ONLY signals are omitted unless IDENTIFIER_USE_RESTRICTED is currently
+        granted and both controlled access headers are supplied. Such disclosure is
+        durably audited before the response is released. HIDDEN signals, protected
+        values, masked values, fingerprints, scores and Entity labels are never
+        returned. VIEW_CROSS_CASE_CONTEXT changes only detailsVisible; P2-007 returns
+        no cross-Case details. Ordered by immutable match ID descending; cursor is
+        bound to Resolution, Workspace and Case.
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - name: cursor
+          in: query
+          schema: { type: string }
+        - name: X-Reason-For-Access
+          in: header
+          required: false
+          description: Required with X-Audit-Operation-Id to request protected MATCH_ONLY signals.
+          schema:
+            type: string
+            enum: [IDENTITY_VERIFICATION, DUPLICATE_REVIEW, AUTHORIZED_INVESTIGATION, DATA_QUALITY_REVIEW]
+        - name: X-Audit-Operation-Id
+          in: header
+          required: false
+          description: Stable UUID required whenever X-Reason-For-Access is supplied.
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Bounded, policy-filtered Entity match page
+          headers:
+            Cache-Control: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EntityMatchPage" }
+        "400": { $ref: "#/components/responses/ResolutionError" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/UserPrincipalRequired" }
+        "404": { $ref: "#/components/responses/ResolutionError" }
+        "409": { $ref: "#/components/responses/ResolutionError" }
+        "503": { $ref: "#/components/responses/ResolutionError" }
   /candidates/{candidateId}:
     parameters:
       - name: candidateId
@@ -1486,6 +1540,60 @@ components:
         revision: { type: integer, minimum: 1 }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
+    EntityMatchSignal:
+      type: object
+      additionalProperties: false
+      required: [field, result, strength, valueVisibility]
+      properties:
+        field:
+          type: string
+          enum: [NATIONAL_ID, PHONE, EMAIL, PLATFORM_USER_ID, USERNAME, INTERNAL_RESIDENT_ID, NAME, DATE_OF_BIRTH, DOMAIN, ACCOUNT_HANDLE]
+        result: { type: string, enum: [EXACT_MATCH, PARTIAL_MATCH, NO_MATCH, CONFLICT] }
+        strength: { type: string, enum: [WEAK, SUPPORTING, STRONG, CONTRADICTING] }
+        valueVisibility: { type: string, enum: [FULL, MASKED, MATCH_ONLY] }
+    EntityMatch:
+      type: object
+      additionalProperties: false
+      required: [id, candidateId, entityRef, matchLevel, signals, conflicts, crossCaseContext, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        candidateId: { type: string, format: uuid }
+        entityRef: { $ref: "#/components/schemas/EntityRef" }
+        matchLevel: { type: string, enum: [LOW, MEDIUM, HIGH, VERY_HIGH] }
+        signals:
+          type: array
+          maxItems: 50
+          items: { $ref: "#/components/schemas/EntityMatchSignal" }
+        conflicts:
+          type: array
+          maxItems: 50
+          items: { $ref: "#/components/schemas/EntityMatchSignal" }
+        crossCaseContext:
+          type: object
+          additionalProperties: false
+          required: [exists, detailsVisible]
+          properties:
+            exists: { type: boolean, const: true }
+            detailsVisible:
+              type: boolean
+              description: Permission capability only; no cross-Case details are returned by P2-007.
+        createdAt: { type: string, format: date-time }
+    EntityMatchPage:
+      type: object
+      additionalProperties: false
+      required: [items, page]
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items: { $ref: "#/components/schemas/EntityMatch" }
+        page:
+          type: object
+          additionalProperties: false
+          required: [hasMore, nextCursor]
+          properties:
+            hasMore: { type: boolean }
+            nextCursor: { type: [string, "null"] }
     CreateWorkspaceRequest:
       type: object
       additionalProperties: false

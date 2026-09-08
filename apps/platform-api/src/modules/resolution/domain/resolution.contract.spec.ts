@@ -2,10 +2,14 @@ import fs from "node:fs";
 import { describe, expect, it } from "vitest";
 import { newUuid } from "../../../platform/ids/uuid.js";
 import { createCandidate } from "./candidate.js";
-import { createEntityMatch, presentEntityMatch } from "./matching-signal.js";
+import {
+  createEntityMatch,
+  presentEntityMatch,
+  presentEntityMatchView,
+} from "./matching-signal.js";
 import { createResolutionSession } from "./resolution-session.js";
 
-describe("P2-005 Resolution public contract", () => {
+describe("P2-005/P2-006/P2-007 Resolution public contract", () => {
   it("serializes bounded Resolution and non-canonical Candidate fields", () => {
     const scope = {
       workspaceId: newUuid(),
@@ -132,6 +136,25 @@ describe("P2-005 Resolution public contract", () => {
     );
     expect(contract).toContain("enum: [PUBLIC, INTERNAL, SENSITIVE, RESTRICTED]");
     expect(contract).toContain('fixed displayLabel "Restricted candidate"');
-    expect(contract).not.toContain("/resolutions/{resolutionId}/matches:");
+    expect(contract).toContain("/resolutions/{resolutionId}/matches:");
+    expect(contract).toContain("operationId: listResolutionEntityMatches");
+    const view = presentEntityMatchView(match, {
+      canDiscoverEntity: true,
+      canUseProtectedSignals: true,
+      canViewCrossCaseContext: false,
+    });
+    expect(Object.keys(JSON.parse(JSON.stringify(view))).sort()).toEqual(
+      [
+        "id",
+        "candidateId",
+        "entityRef",
+        "matchLevel",
+        "signals",
+        "conflicts",
+        "crossCaseContext",
+        "createdAt",
+      ].sort(),
+    );
+    expect(JSON.stringify(view)).not.toContain("classification");
   });
 });
