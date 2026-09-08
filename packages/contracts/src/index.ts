@@ -35,3 +35,4 @@ export type {
   MatchStatus,
 } from "./classification.js";
 export * from "./shell.js";
+export * from "./shadow.js";

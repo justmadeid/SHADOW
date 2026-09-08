@@ -51,6 +51,7 @@ export interface ResolutionRepository {
     },
   ): Promise<{ session: ResolutionSession; candidate: Candidate }>;
   findSession(id: string): Promise<ResolutionSession | undefined>;
+  findLatestSessionForSubject(subjectId: string): Promise<ResolutionSession | undefined>;
   findCandidate(id: string): Promise<Candidate | undefined>;
   listCandidates(
     resolutionSessionId: string,

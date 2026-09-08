@@ -8,8 +8,24 @@ export {
   parseWorkspaces,
   parseInvestigation,
   parseInvestigations,
+  parseCandidate,
+  parseCandidatePage,
+  parseCandidateResolution,
+  parseEntityMatchPage,
+  parseResolutionSession,
+  parseStartResolution,
+  parseSubject,
+  parseSubjectPage,
+  parseSubjectSeed,
+  parseTargetProfile,
 } from "./parsers.js";
-import type { DataClassification } from "@intelligence/contracts";
+import type {
+  DataClassification,
+  ResolutionReasonCode,
+  SubjectRole,
+  SubjectSeedFieldName,
+  SubjectType,
+} from "@intelligence/contracts";
 import {
   parseCaseAccess,
   parseCaseDetail,
@@ -19,6 +35,15 @@ import {
   parseSession,
   parseWorkspace,
   parseWorkspaces,
+  parseCandidatePage,
+  parseCandidateResolution,
+  parseEntityMatchPage,
+  parseResolutionSession,
+  parseStartResolution,
+  parseSubject,
+  parseSubjectPage,
+  parseSubjectSeed,
+  parseTargetProfile,
 } from "./parsers.js";
 
 export type ApiClientOptions = {
@@ -33,6 +58,19 @@ export type CreateCaseInput = {
 };
 export type UpdateCaseInput = Omit<CreateCaseInput, "workspaceId">;
 export type CreateInvestigationInput = { title: string; objective: string };
+export type CreateSubjectInput = {
+  subjectType: SubjectType;
+  role: SubjectRole;
+  investigationId?: string | null;
+  seed: {
+    fields: Array<{
+      name: SubjectSeedFieldName;
+      value: string;
+      origin: "INVESTIGATOR_INPUT";
+      classification: Exclude<DataClassification, "RESTRICTED">;
+    }>;
+  };
+};
 
 export function createApiClient(options: ApiClientOptions) {
   const baseUrl = options.baseUrl.replace(/\/$/, "");
@@ -59,7 +97,11 @@ export function createApiClient(options: ApiClientOptions) {
     method: "POST" | "PATCH",
     body: object | undefined,
     parse: (value: unknown) => T,
-    mutationOptions: { revision?: number; idempotencyKey?: string } = {},
+    mutationOptions: {
+      revision?: number;
+      idempotencyKey?: string;
+      auditOperationId?: string;
+    } = {},
   ): Promise<T> => {
     try {
       const response = await (options.fetch ?? fetch)(`${baseUrl}${path}`, {
@@ -73,6 +115,9 @@ export function createApiClient(options: ApiClientOptions) {
             : {}),
           ...(mutationOptions.idempotencyKey
             ? { "idempotency-key": mutationOptions.idempotencyKey }
+            : {}),
+          ...(mutationOptions.auditOperationId
+            ? { "x-audit-operation-id": mutationOptions.auditOperationId }
             : {}),
         },
         ...(body ? { body: JSON.stringify(body) } : {}),
@@ -135,6 +180,78 @@ export function createApiClient(options: ApiClientOptions) {
         input,
         parseInvestigation,
         { idempotencyKey },
+      ),
+    subjects: (caseId: string, signal?: AbortSignal) =>
+      request(`/cases/${encodeURIComponent(caseId)}/subjects`, parseSubjectPage, signal),
+    subjectSeed: (subjectId: string, signal?: AbortSignal) =>
+      request(
+        `/subjects/${encodeURIComponent(subjectId)}/seed`,
+        parseSubjectSeed,
+        signal,
+      ),
+    subjectResolution: (subjectId: string, signal?: AbortSignal) =>
+      request(
+        `/subjects/${encodeURIComponent(subjectId)}/resolution`,
+        parseResolutionSession,
+        signal,
+      ),
+    createSubject: (caseId: string, input: CreateSubjectInput, idempotencyKey: string) =>
+      mutation(
+        `/cases/${encodeURIComponent(caseId)}/subjects`,
+        "POST",
+        input,
+        parseSubject,
+        { idempotencyKey },
+      ),
+    startResolution: (subjectId: string, revision: number, idempotencyKey: string) =>
+      mutation(
+        `/subjects/${encodeURIComponent(subjectId)}/actions/start-resolution`,
+        "POST",
+        undefined,
+        parseStartResolution,
+        { revision, idempotencyKey },
+      ),
+    resolution: (resolutionId: string, signal?: AbortSignal) =>
+      request(
+        `/resolutions/${encodeURIComponent(resolutionId)}`,
+        parseResolutionSession,
+        signal,
+      ),
+    candidates: (resolutionId: string, signal?: AbortSignal) =>
+      request(
+        `/resolutions/${encodeURIComponent(resolutionId)}/candidates`,
+        parseCandidatePage,
+        signal,
+      ),
+    matches: (resolutionId: string, signal?: AbortSignal) =>
+      request(
+        `/resolutions/${encodeURIComponent(resolutionId)}/matches`,
+        parseEntityMatchPage,
+        signal,
+      ),
+    resolveCandidate: (
+      candidateId: string,
+      input: {
+        decision: "LINK_EXISTING" | "CREATE_NEW" | "UNCERTAIN" | "REJECT";
+        entityId?: string;
+        reasonCode: ResolutionReasonCode;
+      },
+      revision: number,
+      idempotencyKey: string,
+      auditOperationId: string,
+    ) =>
+      mutation(
+        `/candidates/${encodeURIComponent(candidateId)}/actions/resolve`,
+        "POST",
+        input,
+        parseCandidateResolution,
+        { revision, idempotencyKey, auditOperationId },
+      ),
+    targetProfile: (caseId: string, subjectId: string, signal?: AbortSignal) =>
+      request(
+        `/shadow/cases/${encodeURIComponent(caseId)}/targets/${encodeURIComponent(subjectId)}`,
+        parseTargetProfile,
+        signal,
       ),
   };
 }

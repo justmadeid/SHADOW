@@ -12,6 +12,18 @@ describe("read-only BFF path allowlist", () => {
     expect(proxyPath(["cases", id, "investigations"], new URLSearchParams())).toBe(
       `/cases/${id}/investigations`,
     );
+    expect(proxyPath(["cases", id, "subjects"], new URLSearchParams())).toBe(
+      `/cases/${id}/subjects`,
+    );
+    expect(
+      proxyPath(["resolutions", id, "candidates"], new URLSearchParams("limit=50")),
+    ).toBe(`/resolutions/${id}/candidates?limit=50`);
+    expect(proxyPath(["subjects", id, "resolution"], new URLSearchParams())).toBe(
+      `/subjects/${id}/resolution`,
+    );
+    expect(proxyPath(["shadow", "cases", id, "targets", id], new URLSearchParams())).toBe(
+      `/shadow/cases/${id}/targets/${id}`,
+    );
   });
   it.each([
     ["internal", "v1", "runs"],
@@ -36,6 +48,13 @@ describe("read-only BFF path allowlist", () => {
     );
     expect(mutationPath("POST", ["cases", id, "investigations"])).toBe(
       "CREATE_INVESTIGATION",
+    );
+    expect(mutationPath("POST", ["cases", id, "subjects"])).toBe("CREATE_SUBJECT");
+    expect(mutationPath("POST", ["subjects", id, "actions", "start-resolution"])).toBe(
+      "START_RESOLUTION",
+    );
+    expect(mutationPath("POST", ["candidates", id, "actions", "resolve"])).toBe(
+      "RESOLVE_CANDIDATE",
     );
     expect(mutationPath("POST", ["cases", id, "members"])).toBeNull();
     expect(mutationPath("POST", ["cases", id, "actions", "delete"])).toBeNull();

@@ -33,6 +33,7 @@ export async function upstream(
     body?: string;
     idempotencyKey?: string;
     revision?: number;
+    auditOperationId?: string;
   } = {},
 ) {
   const config = webConfig();
@@ -44,6 +45,7 @@ export async function upstream(
       ...(init.body ? { "content-type": "application/json" } : {}),
       ...(init.idempotencyKey ? { "idempotency-key": init.idempotencyKey } : {}),
       ...(init.revision ? { "if-match": `"${init.revision}"` } : {}),
+      ...(init.auditOperationId ? { "x-audit-operation-id": init.auditOperationId } : {}),
     },
     method: init.method ?? "GET",
     ...(init.body ? { body: init.body } : {}),

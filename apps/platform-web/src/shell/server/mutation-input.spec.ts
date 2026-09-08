@@ -41,6 +41,71 @@ describe("shell mutation input boundary", () => {
     );
     expect(result).toMatchObject({ idempotencyKey: "synthetic-key-1" });
   });
+  it("accepts only controlled Add Target seed fields", () => {
+    expect(
+      parseMutationInput(
+        "CREATE_SUBJECT",
+        JSON.stringify({
+          subjectType: "PERSON",
+          role: "PRIMARY_TARGET",
+          seed: {
+            fields: [
+              {
+                name: "DISPLAY_NAME",
+                value: "Synthetic Person",
+                origin: "INVESTIGATOR_INPUT",
+                classification: "INTERNAL",
+              },
+            ],
+          },
+        }),
+        headers({
+          "content-type": "application/json",
+          "idempotency-key": "target-key-1",
+        }),
+      ),
+    ).toMatchObject({ idempotencyKey: "target-key-1" });
+    expect(
+      parseMutationInput(
+        "CREATE_SUBJECT",
+        JSON.stringify({
+          subjectType: "PERSON",
+          role: "PRIMARY_TARGET",
+          seed: {
+            fields: [
+              {
+                name: "NATIONAL_ID",
+                value: "0000000000000000",
+                origin: "INVESTIGATOR_INPUT",
+                classification: "RESTRICTED",
+              },
+            ],
+          },
+        }),
+        headers({
+          "content-type": "application/json",
+          "idempotency-key": "target-key-1",
+        }),
+      ),
+    ).toBeNull();
+  });
+  it("requires concurrency, idempotency and audit IDs for review decisions", () => {
+    const result = parseMutationInput(
+      "RESOLVE_CANDIDATE",
+      JSON.stringify({ decision: "CREATE_NEW", reasonCode: "MANUAL_REVIEW" }),
+      headers({
+        "content-type": "application/json",
+        "idempotency-key": "decision-key-1",
+        "if-match": '"1"',
+        "x-audit-operation-id": workspaceId,
+      }),
+    );
+    expect(result).toMatchObject({
+      revision: 1,
+      idempotencyKey: "decision-key-1",
+      auditOperationId: workspaceId,
+    });
+  });
 
   it.each([
     { title: "Synthetic", description: null, classification: "INTERNAL", admin: true },

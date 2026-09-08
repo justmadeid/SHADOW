@@ -121,6 +121,249 @@ test("SHADOW creates an Investigation only inside an active authorized Case", as
   await form.getByRole("button", { name: "Create Investigation" }).click();
   await expect(page.getByText("Network hypothesis", { exact: true })).toBeVisible();
 });
+test("SHADOW adds a masked Target and completes candidate review", async ({ page }) => {
+  const subjectId = "01900000-0000-7000-8000-000000000020";
+  const resolutionId = "01900000-0000-7000-8000-000000000021";
+  const candidateId = "01900000-0000-7000-8000-000000000022";
+  const entityId = "01900000-0000-7000-8000-000000000023";
+  let status: "UNRESOLVED" | "RESOLVING" | "RESOLVED" = "UNRESOLVED";
+  let revision = 1;
+  const subject = () => ({
+    id: subjectId,
+    workspaceId,
+    caseId,
+    investigationId: null,
+    subjectType: "PERSON",
+    role: "PRIMARY_TARGET",
+    status,
+    entityRef:
+      status === "RESOLVED" ? { type: "ENTITY", id: entityId, workspaceId } : null,
+    seed: { id: "01900000-0000-7000-8000-000000000024", fieldCount: 1 },
+    revision,
+    createdAt: "2026-09-08T00:00:00.000Z",
+    updatedAt: "2026-09-08T00:00:00.000Z",
+  });
+  const resolution = () => ({
+    id: resolutionId,
+    subjectId,
+    workspaceId,
+    caseId,
+    status: status === "RESOLVED" ? "RESOLVED" : "NEEDS_REVIEW",
+    candidatesCount: 1,
+    selectedCandidateId: status === "RESOLVED" ? candidateId : null,
+    resolutionDecisionId:
+      status === "RESOLVED" ? "01900000-0000-7000-8000-000000000025" : null,
+    revision: status === "RESOLVED" ? 3 : 2,
+    createdAt: "2026-09-08T00:00:00.000Z",
+    updatedAt: "2026-09-08T00:00:00.000Z",
+  });
+  const candidate = () => ({
+    id: candidateId,
+    resolutionSessionId: resolutionId,
+    subjectId,
+    workspaceId,
+    caseId,
+    type: "PERSON",
+    status: status === "RESOLVED" ? "RESOLVED" : "PENDING_REVIEW",
+    displayLabel: "Synthetic Person",
+    classification: "SENSITIVE",
+    source: { origin: "RUN", resource: null },
+    evidenceRefs: [],
+    revision: status === "RESOLVED" ? 2 : 1,
+    createdAt: "2026-09-08T00:00:00.000Z",
+    updatedAt: "2026-09-08T00:00:00.000Z",
+  });
+  await page.route(`**/api/platform/cases/${caseId}/subjects`, async (route) => {
+    if (route.request().method() === "GET")
+      return route.fulfill({
+        json: { items: [], page: { hasMore: false, nextCursor: null } },
+      });
+    expect(route.request().postDataJSON()).toMatchObject({
+      subjectType: "PERSON",
+      seed: { fields: [{ name: "DISPLAY_NAME", classification: "SENSITIVE" }] },
+    });
+    return route.fulfill({ status: 201, json: subject() });
+  });
+  await page.route(
+    `**/api/platform/shadow/cases/${caseId}/targets/${subjectId}`,
+    (route) =>
+      route.fulfill({
+        json: {
+          id: subjectId,
+          workspaceId,
+          caseId,
+          subject: subject(),
+          entity:
+            status === "RESOLVED"
+              ? {
+                  id: entityId,
+                  workspaceId,
+                  type: "PERSON",
+                  status: "ACTIVE",
+                  canonicalLabel: "Synthetic Person",
+                  aliases: [],
+                  mergedInto: null,
+                  revision: 1,
+                  createdAt: "2026-09-08T00:00:00.000Z",
+                  updatedAt: "2026-09-08T00:00:00.000Z",
+                }
+              : null,
+          identitySummary: {
+            displayLabel: status === "RESOLVED" ? "Synthetic Person" : null,
+            type: "PERSON",
+            resolutionStatus: status,
+            aliases: [],
+            identifiers:
+              status === "RESOLVED"
+                ? [
+                    {
+                      id: "01900000-0000-7000-8000-000000000026",
+                      entityId,
+                      workspaceId,
+                      type: "NATIONAL_ID",
+                      classification: "RESTRICTED",
+                      status: "ACTIVE",
+                      revision: 1,
+                      createdAt: "2026-09-08T00:00:00.000Z",
+                      updatedAt: "2026-09-08T00:00:00.000Z",
+                      visibility: "MASKED",
+                      displayValue: "••••",
+                    },
+                  ]
+                : [],
+          },
+          sectionAvailability: Object.fromEntries(
+            [
+              "workspaceKnowledge",
+              "sourceCoverage",
+              "accounts",
+              "evidence",
+              "discoveries",
+              "reviews",
+              "searches",
+            ].map((key) => [key, "NOT_IMPLEMENTED"]),
+          ),
+          availableViews: { overview: true, canvas: false, timeline: false, map: false },
+          freshness: {
+            mode: "CANONICAL",
+            generatedAt: "2026-09-08T00:00:00.000Z",
+            sourceUpdatedAt: "2026-09-08T00:00:00.000Z",
+            isStale: false,
+            subjectRevision: revision,
+            entityRevision: status === "RESOLVED" ? 1 : null,
+            latestIdentifierRevision: status === "RESOLVED" ? 1 : null,
+            workspaceKnowledgeUpdatedAt: null,
+          },
+        },
+      }),
+  );
+  await page.route(`**/api/platform/subjects/${subjectId}/seed`, (route) =>
+    route.fulfill({
+      json: {
+        id: "01900000-0000-7000-8000-000000000024",
+        subjectId,
+        workspaceId,
+        caseId,
+        fields: [
+          {
+            id: "01900000-0000-7000-8000-000000000027",
+            ordinal: 0,
+            name: "DISPLAY_NAME",
+            origin: "INVESTIGATOR_INPUT",
+            classification: "SENSITIVE",
+            evidenceRef: null,
+            sourceRecordRef: null,
+            value: {
+              classification: "SENSITIVE",
+              visibility: "MASKED",
+              displayValue: "••••",
+            },
+          },
+        ],
+        createdAt: "2026-09-08T00:00:00.000Z",
+      },
+    }),
+  );
+  await page.route(
+    `**/api/platform/subjects/${subjectId}/actions/start-resolution`,
+    (route) => {
+      status = "RESOLVING";
+      revision = 2;
+      return route.fulfill({
+        status: 202,
+        json: { resolution: resolution(), subject: subject() },
+      });
+    },
+  );
+  await page.route(`**/api/platform/subjects/${subjectId}/resolution`, (route) =>
+    route.fulfill({ json: resolution() }),
+  );
+  await page.route(`**/api/platform/resolutions/${resolutionId}`, (route) =>
+    route.fulfill({ json: resolution() }),
+  );
+  await page.route(`**/api/platform/resolutions/${resolutionId}/candidates`, (route) =>
+    route.fulfill({
+      json: { items: [candidate()], page: { hasMore: false, nextCursor: null } },
+    }),
+  );
+  await page.route(`**/api/platform/resolutions/${resolutionId}/matches`, (route) =>
+    route.fulfill({
+      json: {
+        items: [
+          {
+            id: "01900000-0000-7000-8000-000000000027",
+            candidateId,
+            entityRef: { type: "ENTITY", id: entityId, workspaceId },
+            matchLevel: "HIGH",
+            signals: [
+              {
+                field: "NAME",
+                result: "EXACT_MATCH",
+                strength: "STRONG",
+                valueVisibility: "MATCH_ONLY",
+              },
+            ],
+            conflicts: [],
+            crossCaseContext: { exists: true, detailsVisible: false },
+            createdAt: "2026-09-08T00:00:00.000Z",
+          },
+        ],
+        page: { hasMore: false, nextCursor: null },
+      },
+    }),
+  );
+  await page.route(
+    `**/api/platform/candidates/${candidateId}/actions/resolve`,
+    (route) => {
+      status = "RESOLVED";
+      revision = 3;
+      return route.fulfill({
+        json: { candidate: candidate(), resolution: resolution(), subject: subject() },
+      });
+    },
+  );
+
+  await login(page);
+  await page.getByRole("button", { name: "Add Target" }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByLabel("Display name").fill("Synthetic Person");
+  await dialog.getByLabel("Classification").selectOption("SENSITIVE");
+  await dialog.getByRole("button", { name: "Review" }).click();
+  await dialog.getByRole("button", { name: "Create unresolved Target" }).click();
+  await expect(page.getByRole("heading", { name: "Unresolved Target" })).toBeVisible();
+  await expect(page.getByText("••••", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Start resolution" }).click();
+  await expect(page.getByText("Synthetic Person", { exact: true })).toBeVisible();
+  await page.goto(
+    `/shadow/cases/${caseId}/targets/${subjectId}?workspaceId=${workspaceId}&caseId=${caseId}`,
+  );
+  await expect(page).toHaveURL(/resolutionId=/);
+  await expect(page.getByRole("button", { name: "Link existing" })).toBeVisible();
+  await page.getByRole("button", { name: "Create new Entity" }).click();
+  await expect(page.getByRole("heading", { name: "Synthetic Person" })).toBeVisible();
+  await expect(page.getByText("National id")).toBeVisible();
+  await expect(page.getByText("••••", { exact: true })).toHaveCount(2);
+});
 test("SHADOW confirms terminal archive and removes mutation controls", async ({
   page,
 }) => {

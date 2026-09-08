@@ -359,7 +359,10 @@ dd {
 .mission-header > div,
 .case-list-card,
 .case-detail-card,
-.investigation-card {
+.investigation-card,
+.target-command,
+.profile-card,
+.review-board {
   min-width: 0;
 }
 .case-list-card {
@@ -388,6 +391,9 @@ dd {
 .case-list-card,
 .case-detail-card,
 .investigation-card,
+.target-command,
+.profile-card,
+.review-board,
 .command-panel,
 .confirmation-panel {
   border: 1px solid var(--border);
@@ -397,7 +403,10 @@ dd {
 }
 .case-list-card > .section-heading,
 .case-detail-card > .section-heading,
-.investigation-card > .section-heading {
+.investigation-card > .section-heading,
+.target-command > .section-heading,
+.profile-card > .section-heading,
+.review-board > .section-heading {
   padding-bottom: 16px;
   border-bottom: 1px solid var(--border);
 }
@@ -527,6 +536,268 @@ textarea {
   margin-bottom: 0;
   font-size: 12px;
 }
+.target-grid,
+.candidate-stack {
+  display: grid;
+  gap: 10px;
+  margin-top: 18px;
+}
+.target-row {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  background: #0d151d;
+}
+.target-row p,
+.candidate-title p {
+  margin: 5px 0 0;
+  font-size: 11px;
+}
+.target-glyph,
+.target-avatar {
+  display: grid;
+  place-items: center;
+  border: 1px solid #345365;
+  background: #102533;
+  color: #83d6ff;
+  font-family: ui-monospace, monospace;
+}
+.target-glyph {
+  width: 36px;
+  height: 36px;
+}
+.status-pill {
+  display: inline-flex;
+  width: fit-content;
+  padding: 5px 8px;
+  border: 1px solid #3f4b59;
+  border-radius: 999px;
+  color: #bac4ce;
+  font:
+    9px ui-monospace,
+    monospace;
+  letter-spacing: 0.45px;
+  text-transform: uppercase;
+}
+.status-resolved,
+.status-active {
+  border-color: #356b58;
+  color: #7bdcb5;
+}
+.status-resolving,
+.status-searching,
+.status-needs_review,
+.status-pending_review {
+  border-color: #36657e;
+  color: #83d6ff;
+}
+.status-resolution_failed,
+.status-rejected {
+  border-color: #7d3f48;
+  color: #ff9da6;
+}
+.status-closed,
+.status-uncertain {
+  border-color: #79672d;
+  color: #efd47b;
+}
+.target-drawer {
+  position: fixed;
+  z-index: 20;
+  inset: 0 0 0 auto;
+  width: min(560px, 100%);
+  overflow-y: auto;
+  padding: 28px;
+  border-left: 1px solid #345365;
+  background: #0b1219;
+  box-shadow: -24px 0 70px #0009;
+}
+.target-drawer form {
+  display: grid;
+  gap: 16px;
+}
+.target-drawer label {
+  display: grid;
+  gap: 7px;
+}
+.target-drawer input,
+.target-drawer select {
+  width: 100%;
+  min-width: 0;
+}
+.drawer-head,
+.candidate-title,
+.target-hero,
+.hero-actions,
+.breadcrumb,
+.capability-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+.drawer-head h2 {
+  margin: 6px 0 0;
+}
+.step-track {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.step-track span {
+  height: 3px;
+  background: #2a323d;
+}
+.step-track .complete {
+  background: #52c7ff;
+}
+.review-mode input,
+.review-mode select {
+  color: #aab4bf;
+  border-style: dashed;
+}
+.guardrail,
+.guardrail-note {
+  padding: 12px 14px;
+  border: 1px solid #665b32;
+  border-left: 3px solid #d9b84d;
+  background: #1c1a12;
+  color: #d8c987;
+  font-size: 11px;
+  line-height: 1.55;
+}
+.breadcrumb {
+  justify-content: flex-start;
+  color: var(--muted);
+  font:
+    10px ui-monospace,
+    monospace;
+  text-transform: uppercase;
+}
+.breadcrumb a {
+  color: #83d6ff;
+}
+.target-profile {
+  display: grid;
+  gap: 20px;
+}
+.target-hero {
+  align-items: flex-start;
+  justify-content: flex-start;
+  padding: 22px;
+  border: 1px solid var(--border);
+  border-left: 3px solid #52c7ff;
+  background: linear-gradient(90deg, #102330 0, var(--surface) 42%);
+}
+.target-hero h1 {
+  margin: 6px 0 12px;
+  font-size: clamp(24px, 4vw, 36px);
+}
+.target-avatar {
+  flex: 0 0 auto;
+  width: 66px;
+  height: 66px;
+  font-size: 24px;
+}
+.hero-actions {
+  margin-left: auto;
+}
+.stage-tabs {
+  display: flex;
+  gap: 2px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border);
+}
+.stage-tabs button {
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+}
+.stage-tabs button[aria-selected="true"] {
+  border-bottom-color: #52c7ff;
+  color: #83d6ff;
+}
+.profile-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.65fr);
+  gap: 20px;
+}
+.identity-fields > div {
+  display: grid;
+  grid-template-columns: minmax(130px, 0.7fr) minmax(0, 1.3fr) auto;
+  gap: 12px;
+}
+.identity-fields dd {
+  overflow-wrap: anywhere;
+}
+.identity-fields small {
+  color: var(--muted);
+  font:
+    9px ui-monospace,
+    monospace;
+}
+.candidate-card {
+  padding: 16px;
+  border: 1px solid #313b47;
+  background: #0d151d;
+}
+.match-card,
+.match-panel {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 12px;
+  border-left: 2px solid #52c7ff;
+  background: #111e28;
+}
+.match-panel p,
+.match-panel small {
+  margin: 4px 0 0;
+  color: var(--muted);
+}
+.signal-stack,
+.signal-stack span,
+.signal-list,
+.signal-list span {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.signal-list small {
+  padding: 4px 6px;
+  border: 1px solid #33414e;
+  font:
+    9px ui-monospace,
+    monospace;
+}
+.decision-bar {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
+}
+.decision-bar label {
+  width: min(320px, 100%);
+}
+.decision-bar select {
+  width: 100%;
+  min-width: 0;
+}
+.capability-strip {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  padding: 12px 14px;
+  border: 1px dashed var(--border);
+  color: var(--muted);
+  font:
+    9px ui-monospace,
+    monospace;
+}
 @media (max-width: 760px) {
   .command-bar {
     padding: 12px;
@@ -571,6 +842,15 @@ textarea {
   }
   .case-command-grid {
     grid-template-columns: 1fr;
+  }
+  .profile-grid {
+    grid-template-columns: 1fr;
+  }
+  .target-row {
+    grid-template-columns: 38px minmax(0, 1fr) auto;
+  }
+  .target-row .table-link {
+    grid-column: 2 / -1;
   }
   .case-table {
     display: block;
@@ -617,6 +897,9 @@ textarea {
   .case-list-card,
   .case-detail-card,
   .investigation-card,
+  .target-command,
+  .profile-card,
+  .review-board,
   .command-panel,
   .confirmation-panel {
     padding: 16px;

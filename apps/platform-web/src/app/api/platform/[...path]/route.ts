@@ -7,6 +7,16 @@ import {
   parseInvestigations,
   parseWorkspace,
   parseWorkspaces,
+  parseCandidate,
+  parseCandidatePage,
+  parseCandidateResolution,
+  parseEntityMatchPage,
+  parseResolutionSession,
+  parseStartResolution,
+  parseSubject,
+  parseSubjectPage,
+  parseSubjectSeed,
+  parseTargetProfile,
 } from "@intelligence/api-client";
 import { readSession, upstream, verifiedSession } from "../../../../shell/server/session";
 import {
@@ -44,18 +54,7 @@ export async function GET(
       return failure(
         [400, 401, 403, 404, 429].includes(response.status) ? response.status : 502,
       );
-    const parse =
-      segments[0] === "workspaces"
-        ? segments.length === 1
-          ? parseWorkspaces
-          : parseWorkspace
-        : segments.length === 1
-          ? parseCasePage
-          : segments[2] === "access"
-            ? parseCaseAccess
-            : segments[2] === "investigations"
-              ? parseInvestigations
-              : parseCaseDetail;
+    const parse = readParser(segments);
     return NextResponse.json(parse(await response.json()), { headers });
   } catch {
     return failure(503);
@@ -101,15 +100,44 @@ async function mutate(
           ? response.status
           : 502,
       );
-    return NextResponse.json(
+    const body = await response.json();
+    const parsed =
       kind === "CREATE_INVESTIGATION"
-        ? parseInvestigation(await response.json())
-        : parseCaseDetail(await response.json()),
-      { status: response.status, headers },
-    );
+        ? parseInvestigation(body)
+        : kind === "CREATE_SUBJECT"
+          ? parseSubject(body)
+          : kind === "START_RESOLUTION"
+            ? parseStartResolution(body)
+            : kind === "RESOLVE_CANDIDATE"
+              ? parseCandidateResolution(body)
+              : parseCaseDetail(body);
+    return NextResponse.json(parsed, { status: response.status, headers });
   } catch {
     return failure(503);
   }
+}
+function readParser(segments: string[]): (value: unknown) => unknown {
+  if (segments[0] === "workspaces")
+    return segments.length === 1 ? parseWorkspaces : parseWorkspace;
+  if (segments[0] === "shadow") return parseTargetProfile;
+  if (segments[0] === "subjects")
+    return segments[2] === "seed"
+      ? parseSubjectSeed
+      : segments[2] === "resolution"
+        ? parseResolutionSession
+        : parseSubject;
+  if (segments[0] === "resolutions")
+    return segments[2] === "candidates"
+      ? parseCandidatePage
+      : segments[2] === "matches"
+        ? parseEntityMatchPage
+        : parseResolutionSession;
+  if (segments[0] === "candidates") return parseCandidate;
+  if (segments.length === 1) return parseCasePage;
+  if (segments[2] === "access") return parseCaseAccess;
+  if (segments[2] === "investigations") return parseInvestigations;
+  if (segments[2] === "subjects") return parseSubjectPage;
+  return parseCaseDetail;
 }
 function failure(status: number) {
   return NextResponse.json(

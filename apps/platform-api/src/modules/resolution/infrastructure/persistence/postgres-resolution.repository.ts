@@ -193,6 +193,19 @@ export class PostgresResolutionRepository implements ResolutionRepository {
       : undefined;
   }
 
+  async findLatestSessionForSubject(
+    subjectId: string,
+  ): Promise<ResolutionSession | undefined> {
+    const result = await this.database
+      .connection()
+      .execute(
+        sql`SELECT * FROM resolution_sessions WHERE subject_id = ${subjectId} ORDER BY id DESC LIMIT 1`,
+      );
+    return result.rows[0]
+      ? mapSession(result.rows[0] as ResolutionSessionRow)
+      : undefined;
+  }
+
   async findCandidate(id: string): Promise<Candidate | undefined> {
     const result = await this.database.connection().execute(sql`SELECT c.*,
       COALESCE(jsonb_agg(jsonb_build_object(
