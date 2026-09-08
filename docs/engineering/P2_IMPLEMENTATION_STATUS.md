@@ -569,3 +569,52 @@ Apply Entity migration `0003_entity_merge_baseline.sql` and Audit migration
 `0003_entity_merge_action.sql` before deploying the Platform API. Application
 rollback leaves the append-only merge decision, revisions, audit record and Outbox
 event intact; no automatic reverse merge is attempted.
+
+## P2-012 — Entity merge reversal hook implemented locally
+
+Owner: Entity Registry. The correction command operates on the immutable P2-011
+merge decision; detailed semantics are recorded in
+[ADR-016](ADR-016_ENTITY_MERGE_REVERSAL_HOOK.md).
+
+Implemented:
+
+- `POST /entity-merges/{mergeId}/actions/reverse` with both current Entity revisions,
+  a controlled reason, idempotency key and critical-audit operation ID.
+- USER-only `WORKSPACE_MANAGE` authorization on both recorded Entities with hidden
+  inaccessible/missing state and independent optimistic concurrency checks.
+- Direct-edge validation restores only the recorded absorbed Entity to `ACTIVE`,
+  preserves the survivor lifecycle, and increments and records both revisions.
+- One immutable reversal decision per original merge. The original merge decision is
+  never updated or deleted; actor-scoped exact replay produces no duplicate effects.
+- Same-transaction Entity state/history, reversal decision, idempotency, critical
+  Audit and metadata-only `ENTITY_MERGE_REVERSED` Outbox persistence.
+- No alias, Identifier, Case, Knowledge, Evidence or source redistribution. P2-012 is
+  a bounded correction hook, not a general identity split workflow.
+
+### Deferred integration
+
+Complex partial splits and attribution redistribution require a separate design once
+their owning domains exist. P5-010 owns ECHO Entity merge review UI; this slice adds
+only the canonical backend correction contract.
+
+## P2-012 validation (2026-09-08)
+
+- Full `m0:static` passed: 221 unit tests, 21 contract tests, architecture (198
+  source files), 6 boundary tests, dependency graph, formatting, lint, typecheck,
+  validation of 21 migrations, OpenAPI lint and all 15 production builds.
+- Full PostgreSQL/HTTP integration passed 108 tests. Nineteen Entity scenarios cover
+  successful reversal and replay, stale/unauthorized/invalid state, operation and
+  idempotency conflicts, immutable history, canonical restoration, concurrent
+  serialization and complete rollback when critical Audit persistence fails.
+- All 26 SHADOW/ECHO Playwright regression tests passed. Production dependency audit
+  reports no known vulnerabilities and Gitleaks reports no leaks. Tests use synthetic
+  identities only; no deployment or push was performed.
+- With P2-001 through P2-012 implemented and the applicable Architecture Gates
+  passing, the P2 exit gate for M2 Reusable Identity Core is satisfied locally.
+
+## P2-012 deployment note
+
+Apply Entity migration `0004_entity_merge_reversal.sql` and Audit migration
+`0004_entity_merge_reverse_action.sql` after the P2-011 migrations and before the
+Platform API. Roll back only the API build; retain all additive merge/reversal,
+revision, Audit and Outbox history.

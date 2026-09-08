@@ -21,6 +21,8 @@ info:
     canonical sources; deferred domains are explicit and never represented as facts.
     P2-011 adds a human, auditable and idempotent Entity survivor-merge command;
     both Entity histories remain intact and absorbed IDs continue to resolve.
+    P2-012 adds a reversal decision that restores an absorbed Entity without
+    mutating the original merge decision or redistributing identity/context data.
   license:
     name: Proprietary
     identifier: LicenseRef-Proprietary
@@ -258,6 +260,45 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/EntityMergeDecision" }
+        "400": { $ref: "#/components/responses/EntityError" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/UserPrincipalRequired" }
+        "404": { $ref: "#/components/responses/EntityError" }
+        "409": { $ref: "#/components/responses/EntityError" }
+        "412": { $ref: "#/components/responses/CaseRevisionMismatch" }
+        "503": { $ref: "#/components/responses/EntityError" }
+  /entity-merges/{mergeId}/actions/reverse:
+    parameters:
+      - name: mergeId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: reverseEntityMerge
+      summary: Reverse one auditable Entity merge decision
+      tags: [Entity Registry]
+      description: >-
+        Requires an authenticated user with current WORKSPACE_MANAGE access to both
+        Entities, independent current revision guards, an idempotency key, a
+        controlled correction reason and an Audit operation ID. The absorbed Entity
+        becomes ACTIVE again and both Entity revisions advance atomically with a new
+        immutable reversal decision, metadata-only Outbox event and critical Audit.
+        The original merge decision remains append-only. No alias, Identifier, Case
+        context or Knowledge is moved or rewritten.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/AuditOperationId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReverseEntityMerge" }
+      responses:
+        "201":
+          description: Created or replayed immutable Entity merge reversal decision
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EntityMergeReversalDecision" }
         "400": { $ref: "#/components/responses/EntityError" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/UserPrincipalRequired" }
@@ -1505,6 +1546,32 @@ components:
         survivorRevision: { type: integer, minimum: 2 }
         absorbedRevision: { type: integer, minimum: 2 }
         reasonCode: { $ref: "#/components/schemas/EntityMergeReasonCode" }
+        createdAt: { type: string, format: date-time }
+    EntityMergeReverseReasonCode:
+      type: string
+      enum: [INCORRECT_IDENTITY_MATCH, INSUFFICIENT_EVIDENCE, WRONG_SURVIVOR_SELECTED, DATA_CORRECTION, MANUAL_REVIEW]
+    ReverseEntityMerge:
+      type: object
+      additionalProperties: false
+      required: [survivorRevision, absorbedRevision, reasonCode]
+      properties:
+        survivorRevision: { type: integer, minimum: 1 }
+        absorbedRevision: { type: integer, minimum: 1 }
+        reasonCode: { $ref: "#/components/schemas/EntityMergeReverseReasonCode" }
+    EntityMergeReversalDecision:
+      type: object
+      additionalProperties: false
+      required: [id, operationId, entityMergeId, workspaceId, survivorEntityId, restoredEntityId, survivorRevision, restoredEntityRevision, reasonCode, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        operationId: { type: string, format: uuid }
+        entityMergeId: { type: string, format: uuid }
+        workspaceId: { type: string, format: uuid }
+        survivorEntityId: { type: string, format: uuid }
+        restoredEntityId: { type: string, format: uuid }
+        survivorRevision: { type: integer, minimum: 2 }
+        restoredEntityRevision: { type: integer, minimum: 3 }
+        reasonCode: { $ref: "#/components/schemas/EntityMergeReverseReasonCode" }
         createdAt: { type: string, format: date-time }
     IdentifierType:
       type: string

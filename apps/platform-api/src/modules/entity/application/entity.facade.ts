@@ -16,10 +16,16 @@ import {
   type CreateEntityInput,
   type Entity,
   type EntityMergeDecision,
+  type EntityMergeReversalDecision,
   type MergeEntityInput,
+  type ReverseEntityMergeInput,
   type UpdateEntityInput,
 } from "../domain/entity.js";
-import { parseMergeEntity, parseUpdateEntity } from "../domain/entity-input.js";
+import {
+  parseMergeEntity,
+  parseReverseEntityMerge,
+  parseUpdateEntity,
+} from "../domain/entity-input.js";
 
 @Injectable()
 export class EntityFacade {
@@ -224,6 +230,74 @@ export class EntityFacade {
     });
   }
 
+  async reverseMerge(
+    mergeId: string,
+    input: ReverseEntityMergeInput,
+    idempotencyKey: string,
+    operationId: string,
+  ): Promise<EntityMergeReversalDecision> {
+    const actorUserId = this.requireUser();
+    const command = parseReverseEntityMerge(input);
+    parseIdempotencyKey(idempotencyKey, { required: true });
+    if (!isResourceId(operationId))
+      throw new AppError({
+        code: "VALIDATION_ENTITY_INVALID",
+        message: "Entity merge reversal input is invalid.",
+        statusCode: 400,
+      });
+    return this.transactions.run(async () => {
+      const merge = await this.repository.findMerge(mergeId);
+      if (!merge) return this.mergeNotFound();
+      const survivor = await this.repository.find(merge.survivorEntityId);
+      const absorbed = await this.repository.find(merge.absorbedEntityId);
+      if (!survivor || !absorbed) return this.mergeNotFound();
+      await this.authorizeWorkspace(
+        merge.workspaceId,
+        "WORKSPACE_MANAGE",
+        true,
+        survivor.id,
+      );
+      await this.authorizeWorkspace(
+        merge.workspaceId,
+        "WORKSPACE_MANAGE",
+        true,
+        absorbed.id,
+      );
+      const requestHash = digest({
+        mergeId,
+        survivorRevision: command.survivorRevision,
+        absorbedRevision: command.absorbedRevision,
+        reasonCode: command.reasonCode,
+        operationId,
+      });
+      const reversed = await this.repository.reverseMerge({
+        mergeId,
+        workspaceId: merge.workspaceId,
+        survivorRevision: command.survivorRevision,
+        absorbedRevision: command.absorbedRevision,
+        reasonCode: command.reasonCode,
+        actorUserId,
+        idempotencyKey,
+        requestHash,
+        operationId,
+      });
+      await this.audit.record({
+        operationId,
+        action: "ENTITY_MERGE_REVERSE",
+        outcome: "AUTHORIZED",
+        resource: {
+          type: "ENTITY",
+          id: merge.absorbedEntityId,
+          workspaceId: merge.workspaceId,
+        },
+        reason: command.reasonCode,
+        classification: "INTERNAL",
+        resourceRevision: reversed.decision.restoredEntityRevision,
+      });
+      return reversed.decision;
+    });
+  }
+
   /** Trusted resolution port. Merge-chain mutation is restricted to merge(). */
   async resolve(workspaceId: string, entityId: string) {
     return (await this.resolveMany(workspaceId, [entityId])).get(entityId) ?? null;
@@ -354,6 +428,14 @@ export class EntityFacade {
     throw new AppError({
       code: "ENTITY_NOT_FOUND",
       message: "Entity was not found.",
+      statusCode: 404,
+    });
+  }
+
+  private mergeNotFound(): never {
+    throw new AppError({
+      code: "ENTITY_MERGE_NOT_FOUND",
+      message: "Entity merge was not found.",
       statusCode: 404,
     });
   }

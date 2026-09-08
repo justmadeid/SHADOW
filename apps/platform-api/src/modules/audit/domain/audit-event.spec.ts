@@ -87,4 +87,21 @@ describe("Audit event input", () => {
       }),
     ).not.toThrow();
   });
+  it("accepts a data-minimized Entity merge reversal audit reference", () => {
+    expect(() =>
+      validateAuditInput({
+        operationId: newUuid(),
+        action: "ENTITY_MERGE_REVERSE",
+        outcome: "AUTHORIZED",
+        resource: {
+          type: "ENTITY",
+          id: newUuid(),
+          workspaceId: newUuid(),
+        },
+        classification: "INTERNAL",
+        reason: "INCORRECT_IDENTITY_MATCH",
+        resourceRevision: 3,
+      }),
+    ).not.toThrow();
+  });
 });

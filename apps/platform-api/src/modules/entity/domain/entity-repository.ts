@@ -3,6 +3,8 @@ import type {
   Entity,
   EntityMergeDecision,
   EntityMergeReasonCode,
+  EntityMergeReversalDecision,
+  EntityMergeReverseReasonCode,
   UpdateEntityInput,
 } from "./entity.js";
 
@@ -21,6 +23,7 @@ export interface EntityRepository {
   findManyForUpdate(ids: readonly string[]): Promise<Entity[]>;
   list(workspaceId: string, limit: number, before?: string): Promise<Entity[]>;
   update(current: Entity, input: UpdateEntityInput, actorUserId: string): Promise<Entity>;
+  findMerge(id: string): Promise<EntityMergeDecision | undefined>;
   merge(command: {
     workspaceId: string;
     survivorEntityId: string;
@@ -33,4 +36,15 @@ export interface EntityRepository {
     requestHash: string;
     operationId: string;
   }): Promise<{ decision: EntityMergeDecision; replayed: boolean }>;
+  reverseMerge(command: {
+    mergeId: string;
+    workspaceId: string;
+    survivorRevision: number;
+    absorbedRevision: number;
+    reasonCode: EntityMergeReverseReasonCode;
+    actorUserId: string;
+    idempotencyKey: string;
+    requestHash: string;
+    operationId: string;
+  }): Promise<{ decision: EntityMergeReversalDecision; replayed: boolean }>;
 }

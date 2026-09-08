@@ -33,11 +33,12 @@ not by `AuditFacade.record` itself.
 | `EVIDENCE_EXPORT_AUTHORIZATION` | AUTHORIZED, DENIED | Yes for AUTHORIZED |
 | `SOURCE_ACCESS_AUTHORIZATION` | AUTHORIZED, DENIED | Yes for RESTRICTED AUTHORIZED |
 | `ENTITY_MERGE` | AUTHORIZED | Controlled merge reason code |
+| `ENTITY_MERGE_REVERSE` | AUTHORIZED | Controlled correction reason code |
 
 Missing reason on a denied attempt does not prevent recording the denial.
 AUTHORIZED means permission/intent, not delivery or external execution. Current
 hidden field denials use VIEW; the wrapper only selects MATCH after use-only
-authorization. For Entity merge, the immutable merge decision and Entity revisions
+authorization. For Entity merge/reversal, immutable decisions and Entity revisions
 prove the transactional state change while Audit records the authorized human action.
 Masked values are fixed placeholders and do not load source values.
 

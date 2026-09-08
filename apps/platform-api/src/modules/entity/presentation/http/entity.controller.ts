@@ -19,6 +19,7 @@ import { EntityFacade } from "../../application/entity.facade.js";
 import {
   parseCreateEntity,
   parseMergeEntity,
+  parseReverseEntityMerge,
   parseUpdateEntity,
 } from "../../domain/entity-input.js";
 
@@ -129,6 +130,30 @@ export class EntityController {
       id(operationId),
     );
     response.status(201).setHeader("etag", etagForRevision(value.survivorRevision));
+    return value;
+  }
+
+  @Post("entity-merges/:mergeId/actions/reverse")
+  async reverseMerge(
+    @Param("mergeId") mergeId: string,
+    @Body() body: unknown,
+    @Headers("idempotency-key") key: string | undefined,
+    @Headers("x-audit-operation-id") operationId: string | undefined,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    if (!operationId)
+      throw new AppError({
+        code: "VALIDATION_AUDIT_OPERATION_ID_REQUIRED",
+        message: "X-Audit-Operation-Id is required for Entity merge reversal.",
+        statusCode: 400,
+      });
+    const value = await this.entities.reverseMerge(
+      id(mergeId),
+      parseReverseEntityMerge(body),
+      parseIdempotencyKey(key, { required: true })!,
+      id(operationId),
+    );
+    response.status(201);
     return value;
   }
 }

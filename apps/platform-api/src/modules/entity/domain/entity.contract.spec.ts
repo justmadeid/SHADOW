@@ -4,6 +4,7 @@ import { createEntity } from "./entity.js";
 import {
   parseCreateEntity,
   parseMergeEntity,
+  parseReverseEntityMerge,
   parseUpdateEntity,
 } from "./entity-input.js";
 
@@ -112,5 +113,40 @@ describe("Entity public contract", () => {
     );
     expect(contract).toContain("operationId: mergeEntity");
     expect(contract).toContain('$ref: "#/components/schemas/EntityMergeDecision"');
+  });
+
+  it("accepts only a revision-guarded merge reversal command", () => {
+    expect(
+      parseReverseEntityMerge({
+        survivorRevision: 4,
+        absorbedRevision: 2,
+        reasonCode: "INCORRECT_IDENTITY_MATCH",
+      }),
+    ).toEqual({
+      survivorRevision: 4,
+      absorbedRevision: 2,
+      reasonCode: "INCORRECT_IDENTITY_MATCH",
+    });
+    for (const input of [
+      {},
+      { survivorRevision: 0, absorbedRevision: 2, reasonCode: "DATA_CORRECTION" },
+      { survivorRevision: 2, absorbedRevision: -1, reasonCode: "DATA_CORRECTION" },
+      { survivorRevision: 2, absorbedRevision: 2, reasonCode: "FREE_TEXT" },
+      {
+        survivorRevision: 2,
+        absorbedRevision: 2,
+        reasonCode: "MANUAL_REVIEW",
+        restoreIdentifiers: true,
+      },
+    ])
+      expect(() => parseReverseEntityMerge(input)).toThrow();
+    const contract = fs.readFileSync(
+      new URL("../../../../../../docs/contracts/platform-api-v1.yaml", import.meta.url),
+      "utf8",
+    );
+    expect(contract).toContain("operationId: reverseEntityMerge");
+    expect(contract).toContain(
+      '$ref: "#/components/schemas/EntityMergeReversalDecision"',
+    );
   });
 });
