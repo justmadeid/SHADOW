@@ -95,6 +95,7 @@ describe("P2-005 through P2-008 Resolution HTTP and PostgreSQL", () => {
       "../../../governance/infrastructure/persistence/migrations/0001_create_governance.sql",
       "../../../governance/infrastructure/persistence/migrations/0002_case_membership.sql",
       "../../../governance/infrastructure/persistence/migrations/0003_subject_permissions.sql",
+      "../../../governance/infrastructure/persistence/migrations/0004_workflow_run_permissions.sql",
       "./migrations/0001_create_resolution.sql",
       "./migrations/0002_create_matching_signals.sql",
       "./migrations/0003_atomic_candidate_resolution.sql",

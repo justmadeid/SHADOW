@@ -34,6 +34,7 @@ describe("P1-008 critical audit durability", () => {
       "../../../governance/infrastructure/persistence/migrations/0001_create_governance.sql",
       "../../../governance/infrastructure/persistence/migrations/0002_case_membership.sql",
       "../../../governance/infrastructure/persistence/migrations/0003_subject_permissions.sql",
+      "../../../governance/infrastructure/persistence/migrations/0004_workflow_run_permissions.sql",
       "./migrations/0001_create_audit.sql",
     ])
       await client.db.execute(

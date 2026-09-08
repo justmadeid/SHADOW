@@ -36,6 +36,8 @@ const ownerOrder = [
   "/modules/entity/",
   "/modules/case/",
   "/modules/investigation/",
+  "/modules/workflow/",
+  "/modules/execution/",
   "/modules/subject/",
   "/modules/governance/",
   "/modules/resolution/",

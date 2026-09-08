@@ -11,6 +11,8 @@ describe("Case membership", () => {
       "CASE_VIEW",
       "INVESTIGATION_VIEW",
       "SUBJECT_VIEW",
+      "WORKFLOW_VIEW",
+      "RUN_VIEW",
     ]);
     expect(CASE_ROLE_PERMISSIONS.EDITOR).toEqual(
       expect.arrayContaining(["SUBJECT_CREATE", "SUBJECT_UPDATE", "SUBJECT_VIEW"]),

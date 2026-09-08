@@ -20,6 +20,12 @@ export const PERMISSIONS = [
   "IDENTIFIER_USE_RESTRICTED",
   "IDENTIFIER_VIEW_RESTRICTED",
   "EVIDENCE_EXPORT",
+  "WORKFLOW_VIEW",
+  "WORKFLOW_CREATE",
+  "WORKFLOW_UPDATE",
+  "RUN_CREATE",
+  "RUN_VIEW",
+  "RUN_CANCEL",
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];

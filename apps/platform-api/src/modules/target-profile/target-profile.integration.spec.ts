@@ -71,6 +71,7 @@ describe("P2-009 Target Profile HTTP composition", () => {
       "../governance/infrastructure/persistence/migrations/0001_create_governance.sql",
       "../governance/infrastructure/persistence/migrations/0002_case_membership.sql",
       "../governance/infrastructure/persistence/migrations/0003_subject_permissions.sql",
+      "../governance/infrastructure/persistence/migrations/0004_workflow_run_permissions.sql",
       "../subject/infrastructure/persistence/migrations/0001_create_subject.sql",
       "../subject/infrastructure/persistence/migrations/0002_create_subject_seed.sql",
       "../subject/infrastructure/persistence/migrations/0003_subject_resolution.sql",
