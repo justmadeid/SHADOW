@@ -3,6 +3,7 @@ import {
   addEntityAlias,
   archiveEntity,
   createEntity,
+  mergeEntities,
   normalizeCreateEntity,
   renameEntity,
   type EntityAlias,
@@ -110,6 +111,71 @@ describe("Entity Registry domain", () => {
     expect(archived).toMatchObject({ status: "ARCHIVED", revision: 2 });
     expect(archived.aliases).toHaveLength(1);
     expect(() => archiveEntity(archived, 2, now)).toThrow();
+  });
+
+  it("merges two active same-Workspace identities without destroying either history", () => {
+    const survivor = active();
+    const absorbed = createEntity(
+      {
+        id: "01900000-0000-7000-8000-000000000005",
+        workspaceId,
+        type: "PERSON",
+        canonicalLabel: "Duplicate Person",
+        aliases: [],
+      },
+      now,
+    );
+    const merged = mergeEntities(
+      survivor,
+      absorbed,
+      1,
+      1,
+      new Date("2026-09-07T00:02:00Z"),
+    );
+    expect(merged.survivor).toMatchObject({
+      id: survivor.id,
+      status: "ACTIVE",
+      revision: 2,
+      mergedInto: null,
+    });
+    expect(merged.absorbed).toMatchObject({
+      id: absorbed.id,
+      status: "MERGED",
+      revision: 2,
+      mergedInto: { id: survivor.id, workspaceId },
+    });
+    expect(Object.isFrozen(merged.absorbed.mergedInto)).toBe(true);
+  });
+
+  it("rejects self, stale, inactive, cross-Workspace and cross-type merges", () => {
+    const value = active();
+    const duplicate = createEntity(
+      {
+        id: "01900000-0000-7000-8000-000000000005",
+        workspaceId,
+        type: "PERSON",
+        canonicalLabel: "Duplicate Person",
+        aliases: [],
+      },
+      now,
+    );
+    expect(() => mergeEntities(value, value, 1, 1, now)).toThrow();
+    expect(() => mergeEntities(value, duplicate, 2, 1, now)).toThrow();
+    expect(() =>
+      mergeEntities(archiveEntity(value, 1, now), duplicate, 2, 1, now),
+    ).toThrow();
+    expect(() =>
+      mergeEntities(
+        value,
+        { ...duplicate, workspaceId: "01900000-0000-7000-8000-000000000006" },
+        1,
+        1,
+        now,
+      ),
+    ).toThrow();
+    expect(() =>
+      mergeEntities(value, { ...duplicate, type: "ORGANIZATION" }, 1, 1, now),
+    ).toThrow();
   });
 
   it("rejects invalid IDs, enums, clocks, labels, bounds and stale revisions", () => {

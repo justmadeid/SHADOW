@@ -1,7 +1,10 @@
+import { isResourceId } from "@intelligence/contracts";
 import { AppError } from "../../../platform/errors/index.js";
 import {
+  ENTITY_MERGE_REASON_CODES,
   ENTITY_TYPES,
   type CreateEntityInput,
+  type MergeEntityInput,
   type EntityType,
   type UpdateEntityInput,
 } from "./entity.js";
@@ -31,6 +34,24 @@ export function parseUpdateEntity(value: unknown): UpdateEntityInput {
   if (typeof body.alias === "string") return { alias: body.alias };
   if (body.status === "ARCHIVED") return { status: "ARCHIVED" };
   return invalid();
+}
+
+export function parseMergeEntity(value: unknown): MergeEntityInput {
+  const body = record(value, ["absorbedEntityId", "absorbedRevision", "reasonCode"]);
+  if (
+    typeof body.absorbedEntityId !== "string" ||
+    !isResourceId(body.absorbedEntityId) ||
+    typeof body.absorbedRevision !== "number" ||
+    !Number.isSafeInteger(body.absorbedRevision) ||
+    body.absorbedRevision < 1 ||
+    !ENTITY_MERGE_REASON_CODES.includes(body.reasonCode as never)
+  )
+    invalid();
+  return {
+    absorbedEntityId: body.absorbedEntityId,
+    absorbedRevision: body.absorbedRevision,
+    reasonCode: body.reasonCode as MergeEntityInput["reasonCode"],
+  };
 }
 
 function record(value: unknown, allowed: string[]): Record<string, unknown> {

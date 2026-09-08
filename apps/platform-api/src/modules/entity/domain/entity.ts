@@ -19,8 +19,16 @@ export const ENTITY_TYPES = [
   "EVENT",
 ] as const;
 export const ENTITY_STATUSES = ["ACTIVE", "MERGED", "ARCHIVED"] as const;
+export const ENTITY_MERGE_REASON_CODES = [
+  "DUPLICATE_IDENTITY",
+  "EXACT_IDENTIFIER_MATCH",
+  "MULTIPLE_SUPPORTING_SIGNALS",
+  "DATA_CORRECTION",
+  "MANUAL_REVIEW",
+] as const;
 export type EntityType = (typeof ENTITY_TYPES)[number];
 export type EntityStatus = (typeof ENTITY_STATUSES)[number];
+export type EntityMergeReasonCode = (typeof ENTITY_MERGE_REASON_CODES)[number];
 export type EntityRef = Readonly<
   Pick<ResourceRef, "id" | "workspaceId"> & { type: "ENTITY" }
 >;
@@ -51,6 +59,22 @@ export type CreateEntityInput = {
 };
 export type UpdateEntityInput =
   { canonicalLabel: string } | { alias: string } | { status: "ARCHIVED" };
+export type MergeEntityInput = {
+  absorbedEntityId: string;
+  absorbedRevision: number;
+  reasonCode: EntityMergeReasonCode;
+};
+export type EntityMergeDecision = Readonly<{
+  id: string;
+  operationId: string;
+  workspaceId: string;
+  survivorEntityId: string;
+  absorbedEntityId: string;
+  survivorRevision: number;
+  absorbedRevision: number;
+  reasonCode: EntityMergeReasonCode;
+  createdAt: string;
+}>;
 
 export function normalizeCreateEntity(input: CreateEntityInput): CreateEntityInput {
   if (!ENTITY_TYPES.includes(input.type)) invalid();
@@ -174,6 +198,44 @@ export function archiveEntity(
   return next(current, { status: "ARCHIVED" }, now);
 }
 
+export function mergeEntities(
+  survivor: Entity,
+  absorbed: Entity,
+  survivorExpectedRevision: number,
+  absorbedExpectedRevision: number,
+  now: Date,
+): { survivor: Entity; absorbed: Entity } {
+  if (survivor.id === absorbed.id)
+    throw new AppError({
+      code: "ENTITY_MERGE_INVALID_TARGET",
+      message: "An Entity cannot be merged into itself.",
+      statusCode: 409,
+    });
+  mutable(survivor, survivorExpectedRevision);
+  mutable(absorbed, absorbedExpectedRevision);
+  if (survivor.workspaceId !== absorbed.workspaceId || survivor.type !== absorbed.type)
+    throw new AppError({
+      code: "ENTITY_MERGE_INCOMPATIBLE",
+      message: "Only active Entities of the same type and Workspace can be merged.",
+      statusCode: 409,
+    });
+  return {
+    survivor: next(survivor, {}, now),
+    absorbed: next(
+      absorbed,
+      {
+        status: "MERGED",
+        mergedInto: {
+          type: "ENTITY",
+          id: survivor.id,
+          workspaceId: survivor.workspaceId,
+        },
+      },
+      now,
+    ),
+  };
+}
+
 export function normalizeEntityLabel(value: unknown): string {
   if (typeof value !== "string") invalid();
   if (hasControlCharacters(value)) invalid();
@@ -224,7 +286,7 @@ function mutable(current: Entity, expectedRevision: number): void {
 
 function next(
   current: Entity,
-  changes: Partial<Pick<Entity, "canonicalLabel" | "aliases" | "status">>,
+  changes: Partial<Pick<Entity, "canonicalLabel" | "aliases" | "status" | "mergedInto">>,
   now: Date,
 ): Entity {
   const updatedAt = instant(now);

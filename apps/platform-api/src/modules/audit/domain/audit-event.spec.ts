@@ -70,4 +70,21 @@ describe("Audit event input", () => {
       }),
     ).not.toThrow();
   });
+  it("accepts a data-minimized Entity merge audit reference", () => {
+    expect(() =>
+      validateAuditInput({
+        operationId: newUuid(),
+        action: "ENTITY_MERGE",
+        outcome: "AUTHORIZED",
+        resource: {
+          type: "ENTITY",
+          id: newUuid(),
+          workspaceId: newUuid(),
+        },
+        classification: "INTERNAL",
+        reason: "DUPLICATE_IDENTITY",
+        resourceRevision: 2,
+      }),
+    ).not.toThrow();
+  });
 });

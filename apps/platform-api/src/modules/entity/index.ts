@@ -5,8 +5,11 @@ export { IDENTIFIER_ACCESS_REASONS } from "./application/identifier.facade.js";
 export {
   ENTITY_TYPES,
   ENTITY_STATUSES,
+  ENTITY_MERGE_REASON_CODES,
   type Entity,
   type EntityAlias,
+  type EntityMergeDecision,
+  type EntityMergeReasonCode,
   type EntityRef,
   type EntityStatus,
   type EntityType,

@@ -8,10 +8,12 @@ import {
   archiveEntity,
   createEntity,
   labelKey,
+  mergeEntities,
   normalizeCreateEntity,
   renameEntity,
   type Entity,
   type EntityAlias,
+  type EntityMergeDecision,
   type EntityType,
   type UpdateEntityInput,
 } from "../../domain/entity.js";
@@ -128,6 +130,7 @@ export class PostgresEntityRepository implements EntityRepository {
         uniqueIds.map((id) => sql`${id}::uuid`),
         sql`, `,
       )})
+      ORDER BY e.id
       FOR UPDATE OF e`);
     return (result.rows as EntityRow[]).map(mapEntity);
   }
@@ -211,6 +214,134 @@ export class PostgresEntityRepository implements EntityRepository {
     return value;
   }
 
+  async merge(
+    command: Parameters<EntityRepository["merge"]>[0],
+  ): Promise<{ decision: EntityMergeDecision; replayed: boolean }> {
+    this.requireTransaction();
+    const db = this.database.connection();
+    await db.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${`entity-merge:${command.actorUserId}:${command.idempotencyKey}`}, 0))`,
+    );
+    await db.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${`entity-merge-workspace:${command.workspaceId}`}, 0))`,
+    );
+
+    const replay = await db.execute(sql`
+      SELECT m.*, i.request_hash FROM entity_merge_idempotency i
+      JOIN entity_merges m ON m.id = i.merge_id
+      WHERE i.user_id = ${command.actorUserId}
+        AND i.idempotency_key = ${command.idempotencyKey}`);
+    const replayRow = replay.rows[0] as
+      (EntityMergeRow & { request_hash: string }) | undefined;
+    if (replayRow) {
+      if (replayRow.request_hash !== command.requestHash) conflict();
+      return { decision: mapEntityMerge(replayRow), replayed: true };
+    }
+
+    const operation = await db.execute(sql`SELECT id FROM entity_merges
+      WHERE workspace_id = ${command.workspaceId}
+        AND operation_id = ${command.operationId}`);
+    if (operation.rows.length) operationConflict();
+
+    const current = new Map(
+      (
+        await this.findManyForUpdate([command.survivorEntityId, command.absorbedEntityId])
+      ).map((entity) => [entity.id, entity]),
+    );
+    const survivor = current.get(command.survivorEntityId);
+    const absorbed = current.get(command.absorbedEntityId);
+    if (
+      !survivor ||
+      !absorbed ||
+      survivor.workspaceId !== command.workspaceId ||
+      absorbed.workspaceId !== command.workspaceId
+    )
+      mergeNotFound();
+    await this.assertMergeDepth(command.workspaceId, absorbed.id);
+
+    const now = new Date();
+    const merged = mergeEntities(
+      survivor,
+      absorbed,
+      command.survivorRevision,
+      command.absorbedRevision,
+      now,
+    );
+    const survivorUpdated = await db.execute(sql`UPDATE entities
+      SET revision = ${merged.survivor.revision}, updated_at = ${merged.survivor.updatedAt}
+      WHERE id = ${survivor.id} AND workspace_id = ${command.workspaceId}
+        AND revision = ${survivor.revision} RETURNING id`);
+    const absorbedUpdated = await db.execute(sql`UPDATE entities
+      SET status = ${merged.absorbed.status}, merged_into_id = ${survivor.id},
+        revision = ${merged.absorbed.revision}, updated_at = ${merged.absorbed.updatedAt}
+      WHERE id = ${absorbed.id} AND workspace_id = ${command.workspaceId}
+        AND revision = ${absorbed.revision} RETURNING id`);
+    if (!survivorUpdated.rows.length || !absorbedUpdated.rows.length) revisionConflict();
+
+    const decision: EntityMergeDecision = Object.freeze({
+      id: newUuid(),
+      operationId: command.operationId,
+      workspaceId: command.workspaceId,
+      survivorEntityId: survivor.id,
+      absorbedEntityId: absorbed.id,
+      survivorRevision: merged.survivor.revision,
+      absorbedRevision: merged.absorbed.revision,
+      reasonCode: command.reasonCode,
+      createdAt: now.toISOString(),
+    });
+    await db.execute(sql`INSERT INTO entity_merges
+      (id, operation_id, workspace_id, survivor_entity_id, absorbed_entity_id,
+       survivor_revision_before, survivor_revision_after, absorbed_revision_before,
+       absorbed_revision_after, reason_code, actor_user_id, created_at)
+      VALUES (${decision.id}, ${decision.operationId}, ${decision.workspaceId},
+        ${decision.survivorEntityId}, ${decision.absorbedEntityId},
+        ${survivor.revision}, ${decision.survivorRevision}, ${absorbed.revision},
+        ${decision.absorbedRevision}, ${decision.reasonCode}, ${command.actorUserId},
+        ${decision.createdAt})`);
+    await db.execute(sql`INSERT INTO entity_merge_idempotency
+      (user_id, idempotency_key, request_hash, merge_id, created_at)
+      VALUES (${command.actorUserId}, ${command.idempotencyKey}, ${command.requestHash},
+        ${decision.id}, ${decision.createdAt})`);
+    await this.recordRevision(merged.survivor, command.actorUserId);
+    await this.recordRevision(merged.absorbed, command.actorUserId);
+    await this.outbox.enqueue({
+      type: "ENTITY_MERGED",
+      version: 1,
+      aggregate: { type: "ENTITY_MERGE", id: decision.id },
+      payload: {
+        entityMergeId: decision.id,
+        workspaceId: decision.workspaceId,
+        survivorEntityId: decision.survivorEntityId,
+        absorbedEntityId: decision.absorbedEntityId,
+        survivorRevision: decision.survivorRevision,
+        absorbedRevision: decision.absorbedRevision,
+      },
+      occurredAt: now,
+    });
+    return { decision, replayed: false };
+  }
+
+  private async assertMergeDepth(workspaceId: string, absorbedEntityId: string) {
+    const result = await this.database.connection().execute(sql`
+      WITH RECURSIVE predecessors(id, depth, path) AS (
+        SELECT ${absorbedEntityId}::uuid, 0, ARRAY[${absorbedEntityId}::uuid]
+        UNION ALL
+        SELECT e.id, p.depth + 1, p.path || e.id
+        FROM entities e
+        JOIN predecessors p ON e.merged_into_id = p.id
+        WHERE e.workspace_id = ${workspaceId}
+          AND p.depth < 15
+          AND NOT e.id = ANY(p.path)
+      )
+      SELECT 1 FROM predecessors WHERE depth = 15 LIMIT 1`);
+    if (result.rows.length)
+      throw new AppError({
+        code: "ENTITY_MERGE_CHAIN_LIMIT",
+        message: "The Entity merge chain has reached its supported limit.",
+        statusCode: 409,
+      });
+  }
+
   private async insertAlias(
     entity: Entity,
     alias: EntityAlias,
@@ -262,12 +393,7 @@ export class PostgresEntityRepository implements EntityRepository {
   }
 
   private async record(value: Entity, actorUserId: string, eventType: string) {
-    await this.database.connection().execute(sql`INSERT INTO entity_revisions
-      (entity_id, revision, entity_type, status, canonical_label, merged_into_id,
-       actor_user_id, occurred_at)
-      VALUES (${value.id}, ${value.revision}, ${value.type}, ${value.status},
-        ${value.canonicalLabel}, ${value.mergedInto?.id ?? null}, ${actorUserId},
-        ${value.updatedAt})`);
+    await this.recordRevision(value, actorUserId);
     await this.outbox.enqueue({
       type: eventType,
       version: 1,
@@ -280,6 +406,15 @@ export class PostgresEntityRepository implements EntityRepository {
       },
       occurredAt: new Date(value.updatedAt),
     });
+  }
+
+  private async recordRevision(value: Entity, actorUserId: string) {
+    await this.database.connection().execute(sql`INSERT INTO entity_revisions
+      (entity_id, revision, entity_type, status, canonical_label, merged_into_id,
+       actor_user_id, occurred_at)
+      VALUES (${value.id}, ${value.revision}, ${value.type}, ${value.status},
+        ${value.canonicalLabel}, ${value.mergedInto?.id ?? null}, ${actorUserId},
+        ${value.updatedAt})`);
   }
 
   private requireTransaction() {
@@ -301,6 +436,17 @@ type EntityRow = {
   aliases: { id: string; label: string; createdAt: string }[];
 };
 type AliasRow = { id: string; label: string; created_at: Date | string };
+type EntityMergeRow = {
+  id: string;
+  operation_id: string;
+  workspace_id: string;
+  survivor_entity_id: string;
+  absorbed_entity_id: string;
+  survivor_revision_after: number;
+  absorbed_revision_after: number;
+  reason_code: EntityMergeDecision["reasonCode"];
+  created_at: Date | string;
+};
 
 function mapEntity(row: EntityRow): Entity {
   return Object.freeze({
@@ -331,10 +477,48 @@ function mapEntity(row: EntityRow): Entity {
   });
 }
 
+function mapEntityMerge(row: EntityMergeRow): EntityMergeDecision {
+  return Object.freeze({
+    id: row.id,
+    operationId: row.operation_id,
+    workspaceId: row.workspace_id,
+    survivorEntityId: row.survivor_entity_id,
+    absorbedEntityId: row.absorbed_entity_id,
+    survivorRevision: row.survivor_revision_after,
+    absorbedRevision: row.absorbed_revision_after,
+    reasonCode: row.reason_code,
+    createdAt: new Date(row.created_at).toISOString(),
+  });
+}
+
 function conflict(): never {
   throw new AppError({
     code: "CONFLICT_IDEMPOTENCY_KEY_REUSED",
     message: "Idempotency-Key was already used with a different request.",
     statusCode: 409,
+  });
+}
+
+function operationConflict(): never {
+  throw new AppError({
+    code: "ENTITY_MERGE_OPERATION_CONFLICT",
+    message: "The audit operation ID was already used for another Entity merge.",
+    statusCode: 409,
+  });
+}
+
+function mergeNotFound(): never {
+  throw new AppError({
+    code: "ENTITY_NOT_FOUND",
+    message: "Entity was not found.",
+    statusCode: 404,
+  });
+}
+
+function revisionConflict(): never {
+  throw new AppError({
+    code: "CONFLICT_REVISION_MISMATCH",
+    message: "The resource has changed since it was read.",
+    statusCode: 412,
   });
 }

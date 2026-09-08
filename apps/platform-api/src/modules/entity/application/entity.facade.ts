@@ -1,6 +1,8 @@
+import { createHash } from "node:crypto";
 import { Inject, Injectable } from "@nestjs/common";
 import { DrizzleTransactionManager } from "@intelligence/database";
 import { isResourceId } from "@intelligence/contracts";
+import { AuditFacade } from "../../audit/index.js";
 import { PolicyEnforcer } from "../../governance/index.js";
 import { WorkspaceFacade } from "../../workspace/index.js";
 import { AppError } from "../../../platform/errors/index.js";
@@ -13,9 +15,11 @@ import {
   normalizeCreateEntity,
   type CreateEntityInput,
   type Entity,
+  type EntityMergeDecision,
+  type MergeEntityInput,
   type UpdateEntityInput,
 } from "../domain/entity.js";
-import { parseUpdateEntity } from "../domain/entity-input.js";
+import { parseMergeEntity, parseUpdateEntity } from "../domain/entity-input.js";
 
 @Injectable()
 export class EntityFacade {
@@ -23,6 +27,7 @@ export class EntityFacade {
     @Inject(ENTITY_REPOSITORY) private readonly repository: EntityRepository,
     @Inject(WorkspaceFacade) private readonly workspaces: WorkspaceFacade,
     @Inject(PolicyEnforcer) private readonly policy: PolicyEnforcer,
+    @Inject(AuditFacade) private readonly audit: AuditFacade,
     @Inject(DrizzleTransactionManager)
     private readonly transactions: DrizzleTransactionManager,
     @Inject(RequestContextStore) private readonly context: RequestContextStore,
@@ -149,7 +154,77 @@ export class EntityFacade {
     });
   }
 
-  /** Trusted resolution port. Merged-chain creation is deferred to P2-011. */
+  async merge(
+    survivorEntityId: string,
+    input: MergeEntityInput,
+    survivorRevision: number,
+    idempotencyKey: string,
+    operationId: string,
+  ): Promise<EntityMergeDecision> {
+    const actorUserId = this.requireUser();
+    const command = parseMergeEntity(input);
+    parseIdempotencyKey(idempotencyKey, { required: true });
+    if (!isResourceId(operationId))
+      throw new AppError({
+        code: "VALIDATION_ENTITY_INVALID",
+        message: "Entity merge input is invalid.",
+        statusCode: 400,
+      });
+    return this.transactions.run(async () => {
+      const survivor = await this.repository.find(survivorEntityId);
+      const absorbed = await this.repository.find(command.absorbedEntityId);
+      if (!survivor || !absorbed || survivor.workspaceId !== absorbed.workspaceId)
+        return this.notFound();
+      await this.authorizeWorkspace(
+        survivor.workspaceId,
+        "WORKSPACE_MANAGE",
+        true,
+        survivor.id,
+      );
+      await this.authorizeWorkspace(
+        absorbed.workspaceId,
+        "WORKSPACE_MANAGE",
+        true,
+        absorbed.id,
+      );
+      const requestHash = digest({
+        survivorEntityId,
+        absorbedEntityId: command.absorbedEntityId,
+        survivorRevision,
+        absorbedRevision: command.absorbedRevision,
+        reasonCode: command.reasonCode,
+        operationId,
+      });
+      const merged = await this.repository.merge({
+        workspaceId: survivor.workspaceId,
+        survivorEntityId,
+        absorbedEntityId: command.absorbedEntityId,
+        survivorRevision,
+        absorbedRevision: command.absorbedRevision,
+        reasonCode: command.reasonCode,
+        actorUserId,
+        idempotencyKey,
+        requestHash,
+        operationId,
+      });
+      await this.audit.record({
+        operationId,
+        action: "ENTITY_MERGE",
+        outcome: "AUTHORIZED",
+        resource: {
+          type: "ENTITY",
+          id: command.absorbedEntityId,
+          workspaceId: survivor.workspaceId,
+        },
+        reason: command.reasonCode,
+        classification: "INTERNAL",
+        resourceRevision: merged.decision.absorbedRevision,
+      });
+      return merged.decision;
+    });
+  }
+
+  /** Trusted resolution port. Merge-chain mutation is restricted to merge(). */
   async resolve(workspaceId: string, entityId: string) {
     return (await this.resolveMany(workspaceId, [entityId])).get(entityId) ?? null;
   }
@@ -282,4 +357,8 @@ export class EntityFacade {
       statusCode: 404,
     });
   }
+}
+
+function digest(value: object): string {
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }

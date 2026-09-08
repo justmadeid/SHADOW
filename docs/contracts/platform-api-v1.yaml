@@ -19,6 +19,8 @@ info:
     atomic human decision commands with durable audit and canonical Entity linkage.
     P2-009 adds a Case-bound TargetProfileView composed directly from authorized
     canonical sources; deferred domains are explicit and never represented as facts.
+    P2-011 adds a human, auditable and idempotent Entity survivor-merge command;
+    both Entity histories remain intact and absorbed IDs continue to resolve.
   license:
     name: Proprietary
     identifier: LicenseRef-Proprietary
@@ -218,6 +220,51 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/UserPrincipalRequired" }
         "404": { $ref: "#/components/responses/EntityError" }
+  /entities/{survivorEntityId}/actions/merge:
+    parameters:
+      - name: survivorEntityId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: mergeEntity
+      summary: Merge a duplicate Entity into an explicit survivor
+      tags: [Entity Registry]
+      description: >-
+        Requires an authenticated user with current WORKSPACE_MANAGE access to both
+        Entities. Both must be active, have the same Workspace and type, and pass
+        independent optimistic revision checks. The absorbed Entity is retained as
+        MERGED and points to the active survivor; both append-only Entity revisions,
+        the immutable merge decision, one metadata-only Outbox event and critical
+        Audit commit atomically. Replay rechecks authorization and returns the
+        original merge decision. This command does not transfer or delete aliases,
+        identifiers, Case context or Knowledge.
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/AuditOperationId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MergeEntity" }
+      responses:
+        "201":
+          description: Created or replayed immutable Entity merge decision
+          headers:
+            ETag:
+              description: Current survivor Entity revision.
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EntityMergeDecision" }
+        "400": { $ref: "#/components/responses/EntityError" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/UserPrincipalRequired" }
+        "404": { $ref: "#/components/responses/EntityError" }
+        "409": { $ref: "#/components/responses/EntityError" }
+        "412": { $ref: "#/components/responses/CaseRevisionMismatch" }
+        "503": { $ref: "#/components/responses/EntityError" }
   /identifiers/{identifierId}:
     parameters:
       - name: identifierId
@@ -1434,6 +1481,31 @@ components:
           required: [status]
           properties:
             status: { const: ARCHIVED }
+    EntityMergeReasonCode:
+      type: string
+      enum: [DUPLICATE_IDENTITY, EXACT_IDENTIFIER_MATCH, MULTIPLE_SUPPORTING_SIGNALS, DATA_CORRECTION, MANUAL_REVIEW]
+    MergeEntity:
+      type: object
+      additionalProperties: false
+      required: [absorbedEntityId, absorbedRevision, reasonCode]
+      properties:
+        absorbedEntityId: { type: string, format: uuid }
+        absorbedRevision: { type: integer, minimum: 1 }
+        reasonCode: { $ref: "#/components/schemas/EntityMergeReasonCode" }
+    EntityMergeDecision:
+      type: object
+      additionalProperties: false
+      required: [id, operationId, workspaceId, survivorEntityId, absorbedEntityId, survivorRevision, absorbedRevision, reasonCode, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        operationId: { type: string, format: uuid }
+        workspaceId: { type: string, format: uuid }
+        survivorEntityId: { type: string, format: uuid }
+        absorbedEntityId: { type: string, format: uuid }
+        survivorRevision: { type: integer, minimum: 2 }
+        absorbedRevision: { type: integer, minimum: 2 }
+        reasonCode: { $ref: "#/components/schemas/EntityMergeReasonCode" }
+        createdAt: { type: string, format: date-time }
     IdentifierType:
       type: string
       enum: [NATIONAL_ID, PHONE, EMAIL, PLATFORM_USER_ID, USERNAME, INTERNAL_RESIDENT_ID]

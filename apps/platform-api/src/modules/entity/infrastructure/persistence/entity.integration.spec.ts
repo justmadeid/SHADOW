@@ -50,7 +50,7 @@ const body = {
   aliases: ["Test Person"],
 };
 
-describe("P2-003 Entity Registry HTTP and PostgreSQL", () => {
+describe("P2-003/P2-011 Entity Registry HTTP and PostgreSQL", () => {
   let started: Awaited<ReturnType<typeof startPostgresTestContainer>>;
   let client: ReturnType<typeof createDatabaseClient>;
   let app: INestApplication;
@@ -63,6 +63,8 @@ describe("P2-003 Entity Registry HTTP and PostgreSQL", () => {
     client = createDatabaseClient({ databaseUrl: started.databaseUrl, maxPoolSize: 8 });
     for (const migration of [
       "../../../audit/infrastructure/persistence/migrations/0001_create_audit.sql",
+      "../../../audit/infrastructure/persistence/migrations/0002_candidate_resolution_action.sql",
+      "../../../audit/infrastructure/persistence/migrations/0003_entity_merge_action.sql",
       "../../../../platform/events/outbox/infrastructure/persistence/migrations/0001_create_platform_outbox.sql",
       "../../../workspace/infrastructure/persistence/migrations/0001_create_workspace.sql",
       "../../../case/infrastructure/persistence/migrations/0001_create_case.sql",
@@ -70,6 +72,7 @@ describe("P2-003 Entity Registry HTTP and PostgreSQL", () => {
       "../../../governance/infrastructure/persistence/migrations/0002_case_membership.sql",
       "./migrations/0001_create_entity_registry.sql",
       "./migrations/0002_create_secure_identifiers.sql",
+      "./migrations/0003_entity_merge_baseline.sql",
     ])
       await client.db.execute(
         sql.raw(fs.readFileSync(new URL(migration, import.meta.url), "utf8")),
@@ -317,6 +320,333 @@ describe("P2-003 Entity Registry HTTP and PostgreSQL", () => {
     await expect(entities.resolve(workspace.id, legacy.id)).resolves.toMatchObject({
       id: value.id,
       status: "ACTIVE",
+    });
+  });
+
+  it("merges into an explicit survivor with immutable history, audit and idempotency", async () => {
+    const workspace = await fixture();
+    const survivor = (await create(workspace.id).expect(201)).body;
+    const absorbed = (
+      await create(workspace.id, newUuid(), {
+        ...body,
+        canonicalLabel: "Synthetic Duplicate",
+      }).expect(201)
+    ).body;
+    const key = newUuid();
+    const operationId = newUuid();
+    const input = {
+      absorbedEntityId: absorbed.id,
+      absorbedRevision: absorbed.revision,
+      reasonCode: "DUPLICATE_IDENTITY",
+    };
+    const first = await merge(
+      survivor.id,
+      input,
+      survivor.revision,
+      key,
+      operationId,
+    ).expect(201);
+    const replay = await merge(
+      survivor.id,
+      input,
+      survivor.revision,
+      key,
+      operationId,
+    ).expect(201);
+    expect(replay.body).toEqual(first.body);
+    expect(first.headers.etag).toBe('"2"');
+    expect(first.body).toMatchObject({
+      operationId,
+      workspaceId: workspace.id,
+      survivorEntityId: survivor.id,
+      absorbedEntityId: absorbed.id,
+      survivorRevision: 2,
+      absorbedRevision: 2,
+      reasonCode: "DUPLICATE_IDENTITY",
+    });
+    expect((await get(`/entities/${survivor.id}`).expect(200)).body).toMatchObject({
+      status: "ACTIVE",
+      revision: 2,
+      mergedInto: null,
+    });
+    expect((await get(`/entities/${absorbed.id}`).expect(200)).body).toMatchObject({
+      status: "MERGED",
+      revision: 2,
+      mergedInto: { id: survivor.id, workspaceId: workspace.id },
+    });
+    await expect(entities.resolve(workspace.id, absorbed.id)).resolves.toMatchObject({
+      id: survivor.id,
+      revision: 2,
+    });
+
+    const persisted = await client.db.execute(sql`SELECT m.*, a.action, a.outcome,
+      a.reason, a.resource_id, a.resource_revision
+      FROM entity_merges m JOIN audit_events a ON a.operation_id = m.operation_id
+      WHERE m.id = ${first.body.id}`);
+    expect(persisted.rows).toHaveLength(1);
+    expect(persisted.rows[0]).toMatchObject({
+      survivor_entity_id: survivor.id,
+      absorbed_entity_id: absorbed.id,
+      actor_user_id: "owner",
+      action: "ENTITY_MERGE",
+      outcome: "AUTHORIZED",
+      reason: "DUPLICATE_IDENTITY",
+      resource_id: absorbed.id,
+      resource_revision: 2,
+    });
+    const revisions = await client.db.execute(sql`SELECT entity_id, revision, status,
+      merged_into_id FROM entity_revisions
+      WHERE entity_id IN (${survivor.id}, ${absorbed.id}) ORDER BY entity_id, revision`);
+    expect(revisions.rows).toHaveLength(4);
+    const events = await client.db.execute(sql`SELECT aggregate_type, payload
+      FROM platform_outbox_events WHERE event_type = 'ENTITY_MERGED'
+        AND aggregate_id = ${first.body.id}`);
+    expect(events.rows).toHaveLength(1);
+    expect(events.rows[0]).toMatchObject({
+      aggregate_type: "ENTITY_MERGE",
+      payload: {
+        entityMergeId: first.body.id,
+        survivorEntityId: survivor.id,
+        absorbedEntityId: absorbed.id,
+      },
+    });
+    expect(JSON.stringify(events.rows)).not.toContain("Synthetic");
+    await expect(
+      client.db.execute(sql`UPDATE entity_merges SET reason_code = 'MANUAL_REVIEW'
+        WHERE id = ${first.body.id}`),
+    ).rejects.toThrow();
+    await merge(
+      survivor.id,
+      { ...input, reasonCode: "MANUAL_REVIEW" },
+      survivor.revision,
+      key,
+      operationId,
+    ).expect(409);
+    const otherSurvivor = (
+      await create(workspace.id, newUuid(), {
+        ...body,
+        canonicalLabel: "Other Survivor",
+      }).expect(201)
+    ).body;
+    const otherAbsorbed = (
+      await create(workspace.id, newUuid(), {
+        ...body,
+        canonicalLabel: "Other Duplicate",
+      }).expect(201)
+    ).body;
+    await merge(
+      otherSurvivor.id,
+      {
+        absorbedEntityId: otherAbsorbed.id,
+        absorbedRevision: 1,
+        reasonCode: "MANUAL_REVIEW",
+      },
+      1,
+      newUuid(),
+      operationId,
+    ).expect(409);
+  });
+
+  it("rejects unsafe merge scope, lifecycle, concurrency and principals", async () => {
+    const workspace = await fixture();
+    const survivor = (await create(workspace.id).expect(201)).body;
+    const absorbed = (
+      await create(workspace.id, newUuid(), {
+        ...body,
+        canonicalLabel: "Merge Candidate",
+      }).expect(201)
+    ).body;
+    const organization = (
+      await create(workspace.id, newUuid(), {
+        type: "ORGANIZATION",
+        canonicalLabel: "Synthetic Organization",
+      }).expect(201)
+    ).body;
+    const otherWorkspace = await fixture();
+    const foreign = (await create(otherWorkspace.id).expect(201)).body;
+    const command = (absorbedEntityId: string, absorbedRevision = 1) => ({
+      absorbedEntityId,
+      absorbedRevision,
+      reasonCode: "MANUAL_REVIEW",
+    });
+    await merge(survivor.id, command(survivor.id), 1).expect(409);
+    await merge(survivor.id, command(organization.id), 1).expect(409);
+    await merge(survivor.id, command(foreign.id), 1).expect(404);
+    await merge(survivor.id, command(absorbed.id), 2).expect(412);
+    await merge(survivor.id, command(absorbed.id, 2), 1).expect(412);
+    await merge(
+      survivor.id,
+      command(absorbed.id),
+      1,
+      newUuid(),
+      newUuid(),
+      "viewer",
+    ).expect(404);
+    await merge(
+      survivor.id,
+      command(absorbed.id),
+      1,
+      newUuid(),
+      newUuid(),
+      "worker",
+    ).expect(403);
+    await request(app.getHttpServer())
+      .post(`/api/v1/entities/${survivor.id}/actions/merge`)
+      .set("if-match", '"1"')
+      .set("idempotency-key", newUuid())
+      .set("x-audit-operation-id", newUuid())
+      .send(command(absorbed.id))
+      .expect(401);
+    await request(app.getHttpServer())
+      .post(`/api/v1/entities/${survivor.id}/actions/merge`)
+      .set("authorization", "Bearer owner")
+      .send(command(absorbed.id))
+      .expect(400);
+
+    await merge(survivor.id, command(absorbed.id), 1).expect(201);
+    const third = (
+      await create(workspace.id, newUuid(), {
+        ...body,
+        canonicalLabel: "Third Identity",
+      }).expect(201)
+    ).body;
+    await merge(third.id, command(absorbed.id, 2), 1).expect(409);
+  });
+
+  it("serializes concurrent merge decisions for the same absorbed Entity", async () => {
+    const workspace = await fixture();
+    const firstSurvivor = (await create(workspace.id).expect(201)).body;
+    const secondSurvivor = (
+      await create(workspace.id, newUuid(), {
+        ...body,
+        canonicalLabel: "Concurrent Survivor",
+      }).expect(201)
+    ).body;
+    const absorbed = (
+      await create(workspace.id, newUuid(), {
+        ...body,
+        canonicalLabel: "Concurrent Duplicate",
+      }).expect(201)
+    ).body;
+    const command = {
+      absorbedEntityId: absorbed.id,
+      absorbedRevision: 1,
+      reasonCode: "MANUAL_REVIEW",
+    };
+    const attempts = await Promise.all([
+      merge(firstSurvivor.id, command, 1),
+      merge(secondSurvivor.id, command, 1),
+    ]);
+    expect(attempts.map((attempt) => attempt.status).sort()).toEqual([201, 412]);
+    const winner = attempts.find((attempt) => attempt.status === 201)!;
+    expect((await get(`/entities/${absorbed.id}`).expect(200)).body).toMatchObject({
+      status: "MERGED",
+      mergedInto: {
+        id: winner.body.survivorEntityId,
+        workspaceId: workspace.id,
+      },
+    });
+    const decisions = await client.db.execute(sql`SELECT id FROM entity_merges
+      WHERE absorbed_entity_id = ${absorbed.id}`);
+    expect(decisions.rows).toHaveLength(1);
+  });
+
+  it("fails merge closed when critical Audit cannot commit", async () => {
+    const workspace = await fixture();
+    const survivor = (await create(workspace.id).expect(201)).body;
+    const absorbed = (
+      await create(workspace.id, newUuid(), {
+        ...body,
+        canonicalLabel: "Rollback Duplicate",
+      }).expect(201)
+    ).body;
+    await client.db.execute(
+      sql.raw(
+        `CREATE FUNCTION fail_entity_merge_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action = 'ENTITY_MERGE' THEN RAISE EXCEPTION 'synthetic-private-audit-failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER fail_entity_merge_audit BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION fail_entity_merge_audit();`,
+      ),
+    );
+    try {
+      const failed = await merge(
+        survivor.id,
+        {
+          absorbedEntityId: absorbed.id,
+          absorbedRevision: 1,
+          reasonCode: "DATA_CORRECTION",
+        },
+        1,
+      ).expect(503);
+      expect(JSON.stringify(failed.body)).not.toContain("synthetic-private");
+      expect((await get(`/entities/${survivor.id}`).expect(200)).body.revision).toBe(1);
+      expect((await get(`/entities/${absorbed.id}`).expect(200)).body).toMatchObject({
+        status: "ACTIVE",
+        revision: 1,
+        mergedInto: null,
+      });
+      expect(
+        (
+          await client.db.execute(sql`SELECT id FROM entity_merges
+          WHERE absorbed_entity_id = ${absorbed.id}`)
+        ).rows,
+      ).toHaveLength(0);
+      expect(
+        (
+          await client.db.execute(sql`SELECT id FROM platform_outbox_events
+          WHERE event_type = 'ENTITY_MERGED' AND payload->>'absorbedEntityId' = ${absorbed.id}`)
+        ).rows,
+      ).toHaveLength(0);
+    } finally {
+      await client.db.execute(
+        sql.raw(
+          "DROP TRIGGER fail_entity_merge_audit ON audit_events; DROP FUNCTION fail_entity_merge_audit();",
+        ),
+      );
+    }
+  });
+
+  it("keeps canonical resolution bounded by rejecting an over-deep merge chain", async () => {
+    const workspace = await fixture();
+    const oldest = (await create(workspace.id).expect(201)).body;
+    let absorbed = oldest;
+    for (let depth = 1; depth <= 15; depth += 1) {
+      const survivor = (
+        await create(workspace.id, newUuid(), {
+          ...body,
+          canonicalLabel: `Chain Survivor ${depth}`,
+        }).expect(201)
+      ).body;
+      await merge(
+        survivor.id,
+        {
+          absorbedEntityId: absorbed.id,
+          absorbedRevision: absorbed.revision,
+          reasonCode: "DATA_CORRECTION",
+        },
+        survivor.revision,
+      ).expect(201);
+      absorbed = { ...survivor, revision: 2 };
+    }
+    await expect(entities.resolve(workspace.id, oldest.id)).resolves.toMatchObject({
+      id: absorbed.id,
+      status: "ACTIVE",
+    });
+    const unsupportedSurvivor = (
+      await create(workspace.id, newUuid(), {
+        ...body,
+        canonicalLabel: "Unsupported Chain Survivor",
+      }).expect(201)
+    ).body;
+    await merge(
+      unsupportedSurvivor.id,
+      {
+        absorbedEntityId: absorbed.id,
+        absorbedRevision: absorbed.revision,
+        reasonCode: "DATA_CORRECTION",
+      },
+      unsupportedSurvivor.revision,
+    ).expect(409);
+    expect((await get(`/entities/${absorbed.id}`).expect(200)).body).toMatchObject({
+      status: "ACTIVE",
+      revision: 2,
     });
   });
 
@@ -640,6 +970,22 @@ describe("P2-003 Entity Registry HTTP and PostgreSQL", () => {
       .patch(`/api/v1/entities/${id}`)
       .set("authorization", `Bearer ${user}`)
       .set("if-match", `"${revision}"`)
+      .send(input);
+  }
+  function merge(
+    survivorEntityId: string,
+    input: object,
+    survivorRevision: number,
+    key = newUuid(),
+    operationId = newUuid(),
+    user = "owner",
+  ) {
+    return request(app.getHttpServer())
+      .post(`/api/v1/entities/${survivorEntityId}/actions/merge`)
+      .set("authorization", `Bearer ${user}`)
+      .set("if-match", `"${survivorRevision}"`)
+      .set("idempotency-key", key)
+      .set("x-audit-operation-id", operationId)
       .send(input);
   }
   function createIdentifier(
