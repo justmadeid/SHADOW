@@ -1,19 +1,34 @@
-import { DATA_CLASSIFICATIONS, isResourceId } from "@intelligence/contracts";
-import type { mutationPath } from "./proxy-path";
+import {
+  DATA_CLASSIFICATIONS,
+  SUBJECT_ROLES,
+  SUBJECT_SEED_FIELD_NAMES,
+  SUBJECT_TYPES,
+  isResourceId,
+} from "@intelligence/contracts";
+import type { MutationKind } from "./proxy-path";
 
-type MutationKind = NonNullable<ReturnType<typeof mutationPath>>;
 const IDEMPOTENCY_KEY = /^[A-Za-z0-9._~:+/-]{8,200}$/;
 
 export function parseMutationInput(
   kind: MutationKind,
   raw: string,
   headers: Headers,
-): { body?: string; idempotencyKey?: string; revision?: number } | null {
+): {
+  body?: string;
+  idempotencyKey?: string;
+  revision?: number;
+  auditOperationId?: string;
+} | null {
   if (new TextEncoder().encode(raw).byteLength > 8192) return null;
-  if (kind === "TRANSITION_CASE") {
+  if (kind === "TRANSITION_CASE" || kind === "START_RESOLUTION") {
     if (raw.length) return null;
     const revision = parseRevision(headers.get("if-match"));
-    return revision ? { revision } : null;
+    if (!revision) return null;
+    if (kind === "START_RESOLUTION") {
+      const idempotencyKey = headers.get("idempotency-key") ?? "";
+      return IDEMPOTENCY_KEY.test(idempotencyKey) ? { revision, idempotencyKey } : null;
+    }
+    return { revision };
   }
   if (
     headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() !==
@@ -33,11 +48,19 @@ export function parseMutationInput(
       ? ["workspaceId", "title", "description", "classification"]
       : kind === "UPDATE_CASE"
         ? ["title", "description", "classification"]
-        : ["title", "objective"];
+        : kind === "CREATE_INVESTIGATION"
+          ? ["title", "objective"]
+          : kind === "CREATE_SUBJECT"
+            ? ["subjectType", "role", "investigationId", "seed"]
+            : ["decision", "entityId", "reasonCode"];
   if (Object.keys(record).some((key) => !allowed.includes(key))) return null;
   if (kind === "CREATE_INVESTIGATION") {
     if (!validText(record.title, 3, 200) || !validText(record.objective, 3, 2000))
       return null;
+  } else if (kind === "CREATE_SUBJECT") {
+    if (!validSubject(record)) return null;
+  } else if (kind === "RESOLVE_CANDIDATE") {
+    if (!validCandidateDecision(record)) return null;
   } else if (
     !validText(record.title, 3, 200) ||
     !(record.description === null || validOptionalText(record.description, 4000)) ||
@@ -49,16 +72,86 @@ export function parseMutationInput(
   const idempotencyKey = headers.get("idempotency-key") ?? "";
   const revision = parseRevision(headers.get("if-match"));
   if (
-    ["CREATE_CASE", "CREATE_INVESTIGATION"].includes(kind) &&
+    [
+      "CREATE_CASE",
+      "CREATE_INVESTIGATION",
+      "CREATE_SUBJECT",
+      "RESOLVE_CANDIDATE",
+    ].includes(kind) &&
     !IDEMPOTENCY_KEY.test(idempotencyKey)
   )
     return null;
-  if (kind === "UPDATE_CASE" && !revision) return null;
+  if (["UPDATE_CASE", "RESOLVE_CANDIDATE"].includes(kind) && !revision) return null;
+  if (
+    kind === "RESOLVE_CANDIDATE" &&
+    !isResourceId(headers.get("x-audit-operation-id") ?? "")
+  )
+    return null;
   return {
     body: JSON.stringify(record),
     ...(idempotencyKey ? { idempotencyKey } : {}),
     ...(revision ? { revision } : {}),
+    ...(kind === "RESOLVE_CANDIDATE"
+      ? { auditOperationId: headers.get("x-audit-operation-id")! }
+      : {}),
   };
+}
+
+function validSubject(record: Record<string, unknown>): boolean {
+  if (
+    !SUBJECT_TYPES.includes(record.subjectType as never) ||
+    !SUBJECT_ROLES.includes(record.role as never) ||
+    !(
+      record.investigationId === undefined ||
+      record.investigationId === null ||
+      (typeof record.investigationId === "string" && isResourceId(record.investigationId))
+    )
+  )
+    return false;
+  if (!record.seed || typeof record.seed !== "object" || Array.isArray(record.seed))
+    return false;
+  const seed = record.seed as Record<string, unknown>;
+  if (Object.keys(seed).some((key) => key !== "fields")) return false;
+  if (!Array.isArray(seed.fields) || seed.fields.length < 1 || seed.fields.length > 20)
+    return false;
+  const seen = new Set<string>();
+  return seed.fields.every((value) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    const field = value as Record<string, unknown>;
+    if (
+      Object.keys(field).some(
+        (key) => !["name", "value", "origin", "classification"].includes(key),
+      ) ||
+      !SUBJECT_SEED_FIELD_NAMES.includes(field.name as never) ||
+      seen.has(String(field.name)) ||
+      field.origin !== "INVESTIGATOR_INPUT" ||
+      !["PUBLIC", "INTERNAL", "SENSITIVE"].includes(String(field.classification)) ||
+      !validText(field.value, 1, field.name === "SOCIAL_PROFILE_URL" ? 2000 : 300)
+    )
+      return false;
+    seen.add(String(field.name));
+    return true;
+  });
+}
+
+function validCandidateDecision(record: Record<string, unknown>): boolean {
+  const requiresExisting = record.decision === "LINK_EXISTING";
+  return (
+    ["LINK_EXISTING", "CREATE_NEW", "UNCERTAIN", "REJECT"].includes(
+      String(record.decision),
+    ) &&
+    [
+      "EXACT_IDENTIFIER_MATCH",
+      "MULTIPLE_SUPPORTING_SIGNALS",
+      "INSUFFICIENT_EVIDENCE",
+      "CONFLICTING_SIGNALS",
+      "NOT_SAME_IDENTITY",
+      "MANUAL_REVIEW",
+    ].includes(String(record.reasonCode)) &&
+    (requiresExisting
+      ? typeof record.entityId === "string" && isResourceId(record.entityId)
+      : record.entityId === undefined)
+  );
 }
 
 /** Bound actual streamed bytes, including requests without Content-Length. */

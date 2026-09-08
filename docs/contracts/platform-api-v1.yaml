@@ -342,6 +342,26 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/UserPrincipalRequired" }
         "404": { $ref: "#/components/responses/SubjectError" }
+  /subjects/{subjectId}/resolution:
+    parameters:
+      - name: subjectId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getSubjectResolution
+      summary: Read the latest authorized Subject resolution session
+      tags: [Resolution]
+      description: >-
+        Requires current SUBJECT_VIEW access. Returns the latest session for the
+        Subject so a review UI can resume after navigation or reload. Absent and
+        inaccessible Subjects or sessions share RESOLUTION_NOT_FOUND.
+      responses:
+        "200": { $ref: "#/components/responses/ResolutionSuccess" }
+        "400": { $ref: "#/components/responses/ResolutionError" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/UserPrincipalRequired" }
+        "404": { $ref: "#/components/responses/ResolutionError" }
   /subjects/{subjectId}/actions/start-resolution:
     parameters:
       - name: subjectId

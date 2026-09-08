@@ -77,6 +77,7 @@ describe("P2-005 through P2-008 Resolution public contract", () => {
     expect(contract).toContain("/candidates/{candidateId}:");
     expect(contract).toContain("/candidates/{candidateId}/actions/resolve:");
     expect(contract).toContain("/subjects/{subjectId}/actions/start-resolution:");
+    expect(contract).toContain("/subjects/{subjectId}/resolution:");
   });
 
   it("serializes P2-006 explanations without values, fingerprints, or scores", () => {

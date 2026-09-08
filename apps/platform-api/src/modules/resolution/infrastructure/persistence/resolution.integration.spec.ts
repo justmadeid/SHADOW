@@ -226,6 +226,7 @@ describe("P2-005 through P2-008 Resolution HTTP and PostgreSQL", () => {
 
   it("starts resolution and atomically creates a canonical Entity from a Candidate", async () => {
     const original = await fixture();
+    await get(`/subjects/${original.id}/resolution`).expect(404);
     const startKey = newUuid();
     const startedResolution = await request(app.getHttpServer())
       .post(`/api/v1/subjects/${original.id}/actions/start-resolution`)
@@ -248,6 +249,12 @@ describe("P2-005 through P2-008 Resolution HTTP and PostgreSQL", () => {
       .set("idempotency-key", startKey)
       .expect(202);
     expect(startReplay.body.resolution.id).toBe(startedResolution.body.resolution.id);
+    const resumed = await request(app.getHttpServer())
+      .get(`/api/v1/subjects/${original.id}/resolution`)
+      .set("authorization", "Bearer owner")
+      .expect(200);
+    expect(resumed.body.id).toBe(startedResolution.body.resolution.id);
+    expect(resumed.headers.etag).toBe('"1"');
 
     const added = await addCandidate(
       original,
@@ -871,15 +878,21 @@ describe("P2-005 through P2-008 Resolution HTTP and PostgreSQL", () => {
     await request(app.getHttpServer())
       .get(`/api/v1/resolutions/${session.id}`)
       .expect(401);
+    await request(app.getHttpServer())
+      .get(`/api/v1/subjects/${subject.id}/resolution`)
+      .expect(401);
     await get(`/resolutions/${session.id}`, "worker").expect(403);
+    await get(`/subjects/${subject.id}/resolution`, "worker").expect(403);
     for (const user of ["viewer", "outsider"]) {
       await get(`/resolutions/${session.id}`, user).expect(404);
+      await get(`/subjects/${subject.id}/resolution`, user).expect(404);
       await get(`/candidates/${value.candidate.id}`, user).expect(404);
     }
     const membership = await asOwner(() =>
       cases.addMember(subject.caseId, "viewer", "VIEWER", "Resolution review"),
     );
     await get(`/resolutions/${session.id}`, "viewer").expect(200);
+    await get(`/subjects/${subject.id}/resolution`, "viewer").expect(200);
     await get(`/candidates/${value.candidate.id}`, "viewer").expect(200);
     await get(`/resolutions/${session.id}/matches`, "viewer").expect(403);
     await asOwner(() =>
@@ -891,6 +904,7 @@ describe("P2-005 through P2-008 Resolution HTTP and PostgreSQL", () => {
       ),
     );
     await get(`/resolutions/${session.id}`, "viewer").expect(404);
+    await get(`/subjects/${subject.id}/resolution`, "viewer").expect(404);
   });
 
   it("paginates with a session-bound cursor and rejects query abuse", async () => {

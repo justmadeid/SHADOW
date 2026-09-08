@@ -80,6 +80,16 @@ export class ResolutionController {
     return value;
   }
 
+  @Get("subjects/:subjectId/resolution")
+  async getSubjectSession(
+    @Param("subjectId") subjectId: string,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const value = await this.resolutions.getSubjectSession(id(subjectId));
+    response.setHeader("etag", etagForRevision(value.revision));
+    return value;
+  }
+
   @Get("resolutions/:resolutionId/candidates")
   listCandidates(
     @Param("resolutionId") resolutionId: string,

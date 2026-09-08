@@ -12,6 +12,7 @@ import {
   type DataClassification,
 } from "@intelligence/contracts";
 import { useWorkspaceContext } from "../../shell/platform-shell";
+import { TargetWorkspace } from "./target-workspace";
 
 const api = createApiClient({ baseUrl: "/api/platform" });
 type Panel = "create-case" | "edit-case" | "create-investigation" | null;
@@ -221,6 +222,8 @@ export function ShadowCaseWorkspace() {
               onCreate={() => setPanel("create-investigation")}
             />
           </section>
+
+          <TargetWorkspace />
 
           {panel === "edit-case" && editSnapshot && (
             <CaseForm

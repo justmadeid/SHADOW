@@ -459,3 +459,60 @@ and Map remain unavailable until their dedicated read models are implemented.
 No database or worker deployment is required. Deploy the Platform API after the
 P2-008 migrations are already present. Application rollback removes only the
 TargetProfile query surface and does not touch canonical data.
+
+## P2-010 — SHADOW Add Target and review UI implemented locally
+
+Owner: SHADOW frontend product module. The UI consumes the canonical Subject,
+Resolution and Target Profile APIs through the narrow authenticated web BFF; it does
+not introduce a frontend-owned identity store.
+
+Implemented:
+
+- Case-scoped Target list and a two-step Add Target drawer for controlled SubjectSeed
+  fields, target type and Case role. Successful creation opens the canonical
+  `/shadow/cases/{caseId}/targets/{subjectId}` route.
+- Explicit guidance that NATIONAL_ID, phone and email are protected identifiers and
+  are not accepted as general SubjectSeed values. SENSITIVE seed and Entity
+  Identifier views render only the server-provided FULL/MASKED/MATCH_ONLY/HIDDEN
+  projection.
+- Target Profile overview with Case breadcrumb, resolution and canonical Entity
+  state, known fields, aliases, masked identifiers and freshness metadata. Canvas,
+  Timeline, Map and unowned profile sections remain visibly unavailable rather than
+  being simulated.
+- Start-resolution command and Candidate review cards with policy-safe match signals,
+  conflicts and cross-Case existence metadata. OWNER/EDITOR users can Link Existing,
+  Create New, mark Uncertain or Reject with a controlled reason code.
+- Authorized `GET /subjects/{subjectId}/resolution` resumes the latest review session
+  after navigation or reload without persisting a client-side source of truth.
+- Candidate decisions forward Candidate `If-Match`, an idempotency key and a distinct
+  audit operation ID. The BFF uses exact read/write path allowlists, strict body
+  schemas, same-origin mutation checks and validated response parsers.
+- No production mock Candidate, connector result or recorded lookup response. An
+  active empty resolution clearly waits for trusted candidate producers.
+
+### Deferred integration
+
+P4-012 owns the Person Lookup end-to-end flow and trusted candidate production.
+P10-005 owns fast Workspace Target Profile search for a richer reuse-first preflight.
+P2-010 exposes reviewed Entity matches from P2-007 but does not invent a client-side
+registry search or bypass the Resolution coordinator.
+
+## P2-010 validation (2026-09-08)
+
+- Unit suite passed 216 tests, including BFF path/body rejection and mutation-header
+  coverage for Add Target and Candidate decisions.
+- All 26 Playwright tests passed. The P2-010 flow covers classified Subject creation,
+  fixed-mask rendering, start resolution, safe match comparison, Link Existing
+  availability, Create New resolution and final canonical Target Profile display.
+- Full PostgreSQL/HTTP integration passed 99 tests, including latest-session resume
+  under current Subject/Case authorization.
+- Architecture boundaries, dependency graph, formatting, lint, TypeScript and all 15
+  production package/application builds passed. No database migration, deployment or
+  push was performed.
+
+## P2-010 deployment note
+
+No database or worker deployment is required. Deploy the additive Platform API
+resume endpoint, rebuilt contracts/API client, and Platform Web after P2-008/P2-009
+are present. Rollback removes only the query/UI surfaces; canonical Subject,
+Resolution, Candidate, Entity and audit records remain intact.

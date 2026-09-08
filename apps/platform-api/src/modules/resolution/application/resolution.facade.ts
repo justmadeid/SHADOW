@@ -198,6 +198,13 @@ export class ResolutionFacade {
     return found;
   }
 
+  async getSubjectSession(subjectId: string): Promise<ResolutionSession> {
+    await this.authorizeSubject(subjectId, "RESOLUTION_NOT_FOUND");
+    const found = await this.repository.findLatestSessionForSubject(subjectId);
+    if (!found || found.subjectId !== subjectId) return this.resolutionNotFound();
+    return found;
+  }
+
   async listCandidates(resolutionId: string, limit = 50, cursor?: string) {
     const session = await this.getSession(resolutionId);
     if (!Number.isInteger(limit) || limit < 1 || limit > 100)
