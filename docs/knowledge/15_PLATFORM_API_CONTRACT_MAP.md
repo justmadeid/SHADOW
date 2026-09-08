@@ -531,7 +531,7 @@ Public response tidak expose credentials/internal endpoint details.
 GET /api/v1/shadow/cases/{caseId}/overview
 GET /api/v1/shadow/cases/{caseId}/profile-inbox
 GET /api/v1/shadow/profiles
-GET /api/v1/shadow/profiles/{entityId}
+GET /api/v1/shadow/cases/{caseId}/targets/{subjectId}
 GET /api/v1/shadow/cases/{caseId}/intelligence-feed
 GET /api/v1/shadow/cases/{caseId}/timeline
 ```

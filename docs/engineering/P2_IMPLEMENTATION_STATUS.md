@@ -407,3 +407,55 @@ Apply Audit 0002, Subject 0003 and Resolution 0003 before P2-008. These forward
 migrations retain all prior data/history and add lifecycle, scoped-link and replay
 constraints. Roll back only the API build; retain the schema and immutable records as
 described in ADR-013.
+
+## P2-009 — TargetProfileView read model implemented locally
+
+Owner: Target Profile application query layer. Composition, route and disclosure
+decisions are recorded in
+[ADR-014](ADR-014_TARGET_PROFILE_VIEW_COMPOSITION.md).
+
+Implemented:
+
+- Case-bound `GET /shadow/cases/{caseId}/targets/{subjectId}` aligned with the
+  approved SHADOW product route. Exact Subject/Case binding and current
+  `SUBJECT_VIEW` prevent cross-Case profile inference.
+- Request-time composition through public Subject, Entity and Identifier facades.
+  There is no Person/Profile table, repository, projection, migration, event or
+  Outbox write.
+- Unresolved Subjects remain valid profiles without invented canonical labels.
+  Resolved profiles follow the canonical active Entity chain and return thin identity,
+  aliases and active fixed-mask Identifier metadata only.
+- Workspace Knowledge, source coverage, accounts, Evidence, discoveries, reviews and
+  searches are explicit `NOT_IMPLEMENTED` placeholders with nullable totals. No
+  Candidate/source output is promoted or represented as a confirmed fact.
+- Canonical freshness includes generation time, latest source update, Subject/Entity/
+  Identifier revisions and `isStale=false`. P10-007 remains responsible for future
+  projection freshness.
+- `private, no-store`, uniform target-profile 404 behavior, malformed-ID rejection,
+  service-principal denial and no raw seed/Identifier disclosure.
+
+### Deferred integration
+
+Workspace Knowledge, Source, Account, Evidence, Discovery and Search domains will
+replace their placeholders only after their owning modules exist. P2-010 owns the
+SHADOW Add Target/review UI and may consume this summary contract. Canvas, Timeline
+and Map remain unavailable until their dedicated read models are implemented.
+
+## P2-009 validation (2026-09-08)
+
+- Full `m0:static` passed: 214 unit tests, 19 contract tests, architecture (195
+  source files), 6 boundary tests, dependency graph, formatting, lint, typecheck,
+  validation of 17 migrations, OpenAPI lint and all production builds.
+- Full PostgreSQL/HTTP integration passed 99 tests. The five Target Profile scenarios
+  cover unresolved/resolved profiles, merged canonical resolution, raw-value absence,
+  no Outbox write, exact Case binding, inaccessible/missing equivalence,
+  unauthenticated/service denial and malformed identifiers.
+- Existing SHADOW/ECHO regression passed 25 Playwright tests. Production dependency
+  audit reports no known vulnerabilities and Gitleaks reports no leaks. Tests use
+  synthetic identities only.
+
+## P2-009 deployment note
+
+No database or worker deployment is required. Deploy the Platform API after the
+P2-008 migrations are already present. Application rollback removes only the
+TargetProfile query surface and does not touch canonical data.

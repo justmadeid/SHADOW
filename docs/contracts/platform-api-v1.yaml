@@ -17,6 +17,8 @@ info:
     field visibility and durable audit before protected disclosure. P2-005 adds
     ResolutionSession/Candidate review resources. P2-008 adds idempotent start and
     atomic human decision commands with durable audit and canonical Entity linkage.
+    P2-009 adds a Case-bound TargetProfileView composed directly from authorized
+    canonical sources; deferred domains are explicit and never represented as facts.
   license:
     name: Proprietary
     identifier: LicenseRef-Proprietary
@@ -300,38 +302,6 @@ paths:
         "404": { $ref: "#/components/responses/SubjectError" }
         "409": { $ref: "#/components/responses/SubjectError" }
         "500": { $ref: "#/components/responses/SubjectError" }
-  /subjects/{subjectId}/actions/start-resolution:
-    parameters:
-      - name: subjectId
-        in: path
-        required: true
-        schema: { type: string, format: uuid }
-    post:
-      operationId: startSubjectResolution
-      summary: Start an idempotent Subject resolution session
-      tags: [Resolution]
-      description: >-
-        OWNER/EDITOR membership, SUBJECT_UPDATE, mutable parent Case, If-Match and
-        Idempotency-Key are required. Subject RESOLVING transition and session creation
-        commit in one transaction. A retry returns the existing session.
-      parameters:
-        - $ref: "#/components/parameters/IfMatch"
-        - $ref: "#/components/parameters/IdempotencyKey"
-      responses:
-        "202":
-          description: Resolution started or idempotently replayed
-          headers:
-            Location: { schema: { type: string } }
-            ETag: { schema: { type: string } }
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/StartResolutionResult" }
-        "400": { $ref: "#/components/responses/ResolutionError" }
-        "401": { $ref: "#/components/responses/Unauthenticated" }
-        "403": { $ref: "#/components/responses/UserPrincipalRequired" }
-        "404": { $ref: "#/components/responses/ResolutionError" }
-        "409": { $ref: "#/components/responses/ResolutionError" }
-        "412": { $ref: "#/components/responses/CaseRevisionMismatch" }
     get:
       operationId: listSubjects
       summary: List authorized Subjects in a Case
@@ -372,6 +342,38 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/UserPrincipalRequired" }
         "404": { $ref: "#/components/responses/SubjectError" }
+  /subjects/{subjectId}/actions/start-resolution:
+    parameters:
+      - name: subjectId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: startSubjectResolution
+      summary: Start an idempotent Subject resolution session
+      tags: [Resolution]
+      description: >-
+        OWNER/EDITOR membership, SUBJECT_UPDATE, mutable parent Case, If-Match and
+        Idempotency-Key are required. Subject RESOLVING transition and session creation
+        commit in one transaction. A retry returns the existing session.
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "202":
+          description: Resolution started or idempotently replayed
+          headers:
+            Location: { schema: { type: string } }
+            ETag: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StartResolutionResult" }
+        "400": { $ref: "#/components/responses/ResolutionError" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/UserPrincipalRequired" }
+        "404": { $ref: "#/components/responses/ResolutionError" }
+        "409": { $ref: "#/components/responses/ResolutionError" }
+        "412": { $ref: "#/components/responses/CaseRevisionMismatch" }
   /subjects/{subjectId}:
     parameters:
       - name: subjectId
@@ -437,6 +439,37 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/UserPrincipalRequired" }
         "404": { $ref: "#/components/responses/SubjectError" }
+  /shadow/cases/{caseId}/targets/{subjectId}:
+    parameters:
+      - $ref: "#/components/parameters/CaseId"
+      - name: subjectId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getShadowTargetProfile
+      summary: Compose an authorized SHADOW Target Profile
+      tags: [Target Profile]
+      description: >-
+        Requires current SUBJECT_VIEW access to the exact Case and Subject pair.
+        The response is composed at request time from InvestigationSubject, the
+        canonical active Entity when resolved, and fixed-mask active Identifiers.
+        It never returns another Case's context and creates no Person/profile table.
+        Workspace Knowledge and later source/evidence summaries are explicit
+        NOT_IMPLEMENTED placeholders rather than inferred facts or fake zero counts.
+      responses:
+        "200":
+          description: Canonical-source Target Profile summary
+          headers:
+            Cache-Control:
+              schema: { type: string, const: "private, no-store" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TargetProfileView" }
+        "400": { $ref: "#/components/responses/SubjectError" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/UserPrincipalRequired" }
+        "404": { $ref: "#/components/responses/TargetProfileNotFound" }
   /resolutions/{resolutionId}:
     parameters:
       - name: resolutionId
@@ -1249,6 +1282,11 @@ components:
       content:
         application/json:
           schema: { $ref: "#/components/schemas/ErrorResponse" }
+    TargetProfileNotFound:
+      description: Target Profile absent, Case/Subject pair mismatch, or intentionally undisclosed
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
     ResolutionError:
       description: Invalid input, undisclosed resource, lifecycle/idempotency conflict or sanitized persistence failure
       content:
@@ -1561,6 +1599,106 @@ components:
         revision: { type: integer, minimum: 1 }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
+    TargetProfileIdentitySummary:
+      type: object
+      additionalProperties: false
+      required: [displayLabel, type, resolutionStatus, aliases, identifiers]
+      properties:
+        displayLabel: { type: [string, "null"], maxLength: 200 }
+        type:
+          type: string
+          enum: [PERSON, ORGANIZATION, SOCIAL_ACCOUNT, EMAIL_ADDRESS, PHONE_NUMBER, LOCATION, ADDRESS, DOMAIN, WEBSITE, IP_ADDRESS, VEHICLE, DEVICE, DOCUMENT, EVENT, UNKNOWN]
+        resolutionStatus:
+          type: string
+          enum: [UNRESOLVED, RESOLVING, RESOLVED, RESOLUTION_FAILED, ARCHIVED]
+        aliases:
+          type: array
+          maxItems: 20
+          items: { $ref: "#/components/schemas/EntityAlias" }
+        identifiers:
+          type: array
+          maxItems: 100
+          items:
+            allOf:
+              - $ref: "#/components/schemas/IdentifierView"
+              - type: object
+                required: [displayValue]
+                properties:
+                  status: { const: ACTIVE }
+                  visibility: { const: MASKED }
+                  displayValue: { const: "••••" }
+    TargetProfileSectionAvailability:
+      type: object
+      additionalProperties: false
+      required: [workspaceKnowledge, sourceCoverage, accounts, evidence, discoveries, reviews, searches]
+      properties:
+        workspaceKnowledge: { const: NOT_IMPLEMENTED }
+        sourceCoverage: { const: NOT_IMPLEMENTED }
+        accounts: { const: NOT_IMPLEMENTED }
+        evidence: { const: NOT_IMPLEMENTED }
+        discoveries: { const: NOT_IMPLEMENTED }
+        reviews: { const: NOT_IMPLEMENTED }
+        searches: { const: NOT_IMPLEMENTED }
+    TargetProfileAvailableViews:
+      type: object
+      additionalProperties: false
+      required: [overview, canvas, timeline, map]
+      properties:
+        overview: { const: true }
+        canvas: { const: false }
+        timeline: { const: false }
+        map: { const: false }
+    TargetProfileFreshness:
+      type: object
+      additionalProperties: false
+      required: [mode, generatedAt, sourceUpdatedAt, isStale, subjectRevision, entityRevision, latestIdentifierRevision, workspaceKnowledgeUpdatedAt]
+      properties:
+        mode: { const: CANONICAL }
+        generatedAt: { type: string, format: date-time }
+        sourceUpdatedAt: { type: string, format: date-time }
+        isStale: { const: false }
+        subjectRevision: { type: integer, minimum: 1 }
+        entityRevision: { type: [integer, "null"], minimum: 1 }
+        latestIdentifierRevision: { type: [integer, "null"], minimum: 1 }
+        workspaceKnowledgeUpdatedAt: { type: "null" }
+    TargetProfileView:
+      type: object
+      additionalProperties: false
+      required: [id, workspaceId, caseId, subject, entity, identitySummary, workspaceKnowledge, sourceCoverage, accountSummary, evidenceSummary, discoverySummary, openReviewSummary, recentSearches, recentEvidence, recentDiscoveries, sectionAvailability, availableViews, freshness]
+      properties:
+        id: { type: string, format: uuid }
+        workspaceId: { type: string, format: uuid }
+        caseId: { type: string, format: uuid }
+        subject: { $ref: "#/components/schemas/InvestigationSubject" }
+        entity:
+          oneOf:
+            - $ref: "#/components/schemas/Entity"
+            - type: "null"
+        identitySummary: { $ref: "#/components/schemas/TargetProfileIdentitySummary" }
+        workspaceKnowledge: { type: array, maxItems: 0, items: {} }
+        sourceCoverage: { type: array, maxItems: 0, items: {} }
+        accountSummary: { type: array, maxItems: 0, items: {} }
+        evidenceSummary:
+          type: object
+          additionalProperties: false
+          required: [total]
+          properties: { total: { type: "null" } }
+        discoverySummary:
+          type: object
+          additionalProperties: false
+          required: [total]
+          properties: { total: { type: "null" } }
+        openReviewSummary:
+          type: object
+          additionalProperties: false
+          required: [total]
+          properties: { total: { type: "null" } }
+        recentSearches: { type: array, maxItems: 0, items: {} }
+        recentEvidence: { type: array, maxItems: 0, items: {} }
+        recentDiscoveries: { type: array, maxItems: 0, items: {} }
+        sectionAvailability: { $ref: "#/components/schemas/TargetProfileSectionAvailability" }
+        availableViews: { $ref: "#/components/schemas/TargetProfileAvailableViews" }
+        freshness: { $ref: "#/components/schemas/TargetProfileFreshness" }
     ResolutionSession:
       type: object
       additionalProperties: false
