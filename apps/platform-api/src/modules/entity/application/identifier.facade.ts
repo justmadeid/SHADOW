@@ -84,6 +84,16 @@ export class IdentifierFacade {
     return { items: values.map(maskedIdentifier) };
   }
 
+  /** Trusted P2-009 read port. Caller must first authorize the linked Subject/Case. */
+  async listForTargetProfile(
+    entityId: string,
+    workspaceId: string,
+  ): Promise<{ items: IdentifierView[] }> {
+    this.requireUser();
+    const values = await this.repository.list(entityId, workspaceId);
+    return { items: values.map(maskedIdentifier) };
+  }
+
   async get(
     identifierId: string,
     options: { reasonForAccess?: string; operationId?: string },

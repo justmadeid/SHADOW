@@ -72,6 +72,20 @@ export class EntityFacade {
     return found;
   }
 
+  /** Trusted P2-009 read port. Caller must first authorize the linked Subject/Case. */
+  async getForTargetProfile(
+    workspaceId: string,
+    entityId: string,
+  ): Promise<Entity | null> {
+    this.requireUser();
+    const canonical = await this.resolve(workspaceId, entityId);
+    if (!canonical) return null;
+    const found = await this.repository.find(canonical.id);
+    if (!found || found.workspaceId !== workspaceId || found.status !== "ACTIVE")
+      return null;
+    return found;
+  }
+
   async list(workspaceId: string, limit = 50, cursor?: string) {
     this.requireUser();
     await this.authorizeWorkspace(workspaceId, "WORKSPACE_VIEW", true);

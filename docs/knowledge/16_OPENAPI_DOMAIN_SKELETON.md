@@ -708,7 +708,7 @@ No fake percentage if `total` unknown.
 GET /shadow/cases/{caseId}/overview
 GET /shadow/cases/{caseId}/profile-inbox
 GET /shadow/profiles
-GET /shadow/profiles/{entityId}
+GET /shadow/cases/{caseId}/targets/{subjectId}
 GET /shadow/cases/{caseId}/intelligence-feed
 GET /shadow/cases/{caseId}/timeline
 ```
