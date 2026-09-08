@@ -2,9 +2,11 @@ import { isResourceId } from "@intelligence/contracts";
 import { AppError } from "../../../platform/errors/index.js";
 import {
   ENTITY_MERGE_REASON_CODES,
+  ENTITY_MERGE_REVERSE_REASON_CODES,
   ENTITY_TYPES,
   type CreateEntityInput,
   type MergeEntityInput,
+  type ReverseEntityMergeInput,
   type EntityType,
   type UpdateEntityInput,
 } from "./entity.js";
@@ -51,6 +53,25 @@ export function parseMergeEntity(value: unknown): MergeEntityInput {
     absorbedEntityId: body.absorbedEntityId,
     absorbedRevision: body.absorbedRevision,
     reasonCode: body.reasonCode as MergeEntityInput["reasonCode"],
+  };
+}
+
+export function parseReverseEntityMerge(value: unknown): ReverseEntityMergeInput {
+  const body = record(value, ["survivorRevision", "absorbedRevision", "reasonCode"]);
+  if (
+    typeof body.survivorRevision !== "number" ||
+    !Number.isSafeInteger(body.survivorRevision) ||
+    body.survivorRevision < 1 ||
+    typeof body.absorbedRevision !== "number" ||
+    !Number.isSafeInteger(body.absorbedRevision) ||
+    body.absorbedRevision < 1 ||
+    !ENTITY_MERGE_REVERSE_REASON_CODES.includes(body.reasonCode as never)
+  )
+    invalid();
+  return {
+    survivorRevision: body.survivorRevision,
+    absorbedRevision: body.absorbedRevision,
+    reasonCode: body.reasonCode as ReverseEntityMergeInput["reasonCode"],
   };
 }
 

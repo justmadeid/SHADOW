@@ -6,6 +6,7 @@ import {
   mergeEntities,
   normalizeCreateEntity,
   renameEntity,
+  reverseEntityMerge,
   type EntityAlias,
 } from "./entity.js";
 
@@ -175,6 +176,60 @@ describe("Entity Registry domain", () => {
     ).toThrow();
     expect(() =>
       mergeEntities(value, { ...duplicate, type: "ORGANIZATION" }, 1, 1, now),
+    ).toThrow();
+  });
+
+  it("reverses a merge by restoring the absorbed Entity without editing history", () => {
+    const survivor = active();
+    const absorbed = createEntity(
+      {
+        id: "01900000-0000-7000-8000-000000000005",
+        workspaceId,
+        type: "PERSON",
+        canonicalLabel: "Duplicate Person",
+        aliases: [],
+      },
+      now,
+    );
+    const merged = mergeEntities(survivor, absorbed, 1, 1, now);
+    const decision = {
+      id: "01900000-0000-7000-8000-000000000006",
+      operationId: "01900000-0000-7000-8000-000000000007",
+      workspaceId,
+      survivorEntityId: survivor.id,
+      absorbedEntityId: absorbed.id,
+      survivorRevision: 2,
+      absorbedRevision: 2,
+      reasonCode: "DUPLICATE_IDENTITY" as const,
+      createdAt: now.toISOString(),
+    };
+    const reversed = reverseEntityMerge(
+      merged.survivor,
+      merged.absorbed,
+      decision,
+      2,
+      2,
+      new Date("2026-09-07T00:03:00Z"),
+    );
+    expect(reversed.survivor).toMatchObject({ status: "ACTIVE", revision: 3 });
+    expect(reversed.restored).toMatchObject({
+      id: absorbed.id,
+      status: "ACTIVE",
+      revision: 3,
+      mergedInto: null,
+    });
+    expect(() =>
+      reverseEntityMerge(merged.survivor, merged.absorbed, decision, 3, 2, now),
+    ).toThrow();
+    expect(() =>
+      reverseEntityMerge(
+        merged.survivor,
+        { ...merged.absorbed, mergedInto: null },
+        decision,
+        2,
+        2,
+        now,
+      ),
     ).toThrow();
   });
 

@@ -26,9 +26,18 @@ export const ENTITY_MERGE_REASON_CODES = [
   "DATA_CORRECTION",
   "MANUAL_REVIEW",
 ] as const;
+export const ENTITY_MERGE_REVERSE_REASON_CODES = [
+  "INCORRECT_IDENTITY_MATCH",
+  "INSUFFICIENT_EVIDENCE",
+  "WRONG_SURVIVOR_SELECTED",
+  "DATA_CORRECTION",
+  "MANUAL_REVIEW",
+] as const;
 export type EntityType = (typeof ENTITY_TYPES)[number];
 export type EntityStatus = (typeof ENTITY_STATUSES)[number];
 export type EntityMergeReasonCode = (typeof ENTITY_MERGE_REASON_CODES)[number];
+export type EntityMergeReverseReasonCode =
+  (typeof ENTITY_MERGE_REVERSE_REASON_CODES)[number];
 export type EntityRef = Readonly<
   Pick<ResourceRef, "id" | "workspaceId"> & { type: "ENTITY" }
 >;
@@ -73,6 +82,23 @@ export type EntityMergeDecision = Readonly<{
   survivorRevision: number;
   absorbedRevision: number;
   reasonCode: EntityMergeReasonCode;
+  createdAt: string;
+}>;
+export type ReverseEntityMergeInput = {
+  survivorRevision: number;
+  absorbedRevision: number;
+  reasonCode: EntityMergeReverseReasonCode;
+};
+export type EntityMergeReversalDecision = Readonly<{
+  id: string;
+  operationId: string;
+  entityMergeId: string;
+  workspaceId: string;
+  survivorEntityId: string;
+  restoredEntityId: string;
+  survivorRevision: number;
+  restoredEntityRevision: number;
+  reasonCode: EntityMergeReverseReasonCode;
   createdAt: string;
 }>;
 
@@ -233,6 +259,38 @@ export function mergeEntities(
       },
       now,
     ),
+  };
+}
+
+export function reverseEntityMerge(
+  survivor: Entity,
+  absorbed: Entity,
+  merge: EntityMergeDecision,
+  survivorExpectedRevision: number,
+  absorbedExpectedRevision: number,
+  now: Date,
+): { survivor: Entity; restored: Entity } {
+  assertExpectedRevision(survivorExpectedRevision, survivor.revision);
+  assertExpectedRevision(absorbedExpectedRevision, absorbed.revision);
+  if (
+    merge.workspaceId !== survivor.workspaceId ||
+    merge.workspaceId !== absorbed.workspaceId ||
+    merge.survivorEntityId !== survivor.id ||
+    merge.absorbedEntityId !== absorbed.id ||
+    survivor.id === absorbed.id ||
+    survivor.type !== absorbed.type ||
+    absorbed.status !== "MERGED" ||
+    absorbed.mergedInto?.id !== survivor.id ||
+    absorbed.mergedInto.workspaceId !== survivor.workspaceId
+  )
+    throw new AppError({
+      code: "ENTITY_MERGE_REVERSE_INVALID_STATE",
+      message: "The Entity merge is no longer in a reversible state.",
+      statusCode: 409,
+    });
+  return {
+    survivor: next(survivor, {}, now),
+    restored: next(absorbed, { status: "ACTIVE", mergedInto: null }, now),
   };
 }
 

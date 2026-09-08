@@ -50,7 +50,7 @@ const body = {
   aliases: ["Test Person"],
 };
 
-describe("P2-003/P2-011 Entity Registry HTTP and PostgreSQL", () => {
+describe("P2-003/P2-011/P2-012 Entity Registry HTTP and PostgreSQL", () => {
   let started: Awaited<ReturnType<typeof startPostgresTestContainer>>;
   let client: ReturnType<typeof createDatabaseClient>;
   let app: INestApplication;
@@ -65,6 +65,7 @@ describe("P2-003/P2-011 Entity Registry HTTP and PostgreSQL", () => {
       "../../../audit/infrastructure/persistence/migrations/0001_create_audit.sql",
       "../../../audit/infrastructure/persistence/migrations/0002_candidate_resolution_action.sql",
       "../../../audit/infrastructure/persistence/migrations/0003_entity_merge_action.sql",
+      "../../../audit/infrastructure/persistence/migrations/0004_entity_merge_reverse_action.sql",
       "../../../../platform/events/outbox/infrastructure/persistence/migrations/0001_create_platform_outbox.sql",
       "../../../workspace/infrastructure/persistence/migrations/0001_create_workspace.sql",
       "../../../case/infrastructure/persistence/migrations/0001_create_case.sql",
@@ -73,6 +74,7 @@ describe("P2-003/P2-011 Entity Registry HTTP and PostgreSQL", () => {
       "./migrations/0001_create_entity_registry.sql",
       "./migrations/0002_create_secure_identifiers.sql",
       "./migrations/0003_entity_merge_baseline.sql",
+      "./migrations/0004_entity_merge_reversal.sql",
     ])
       await client.db.execute(
         sql.raw(fs.readFileSync(new URL(migration, import.meta.url), "utf8")),
@@ -650,6 +652,298 @@ describe("P2-003/P2-011 Entity Registry HTTP and PostgreSQL", () => {
     });
   });
 
+  it("reverses a merge with immutable history, audit and exact replay", async () => {
+    const workspace = await fixture();
+    const survivor = (await create(workspace.id).expect(201)).body;
+    const absorbed = (
+      await create(workspace.id, newUuid(), {
+        ...body,
+        canonicalLabel: "Reversal Candidate",
+      }).expect(201)
+    ).body;
+    const mergeDecision = (
+      await merge(
+        survivor.id,
+        {
+          absorbedEntityId: absorbed.id,
+          absorbedRevision: 1,
+          reasonCode: "DUPLICATE_IDENTITY",
+        },
+        1,
+      ).expect(201)
+    ).body;
+    const key = newUuid();
+    const operationId = newUuid();
+    const input = {
+      survivorRevision: 2,
+      absorbedRevision: 2,
+      reasonCode: "INCORRECT_IDENTITY_MATCH",
+    };
+    const first = await reverseMerge(mergeDecision.id, input, key, operationId).expect(
+      201,
+    );
+    const replay = await reverseMerge(mergeDecision.id, input, key, operationId).expect(
+      201,
+    );
+    expect(replay.body).toEqual(first.body);
+    expect(first.body).toMatchObject({
+      operationId,
+      entityMergeId: mergeDecision.id,
+      workspaceId: workspace.id,
+      survivorEntityId: survivor.id,
+      restoredEntityId: absorbed.id,
+      survivorRevision: 3,
+      restoredEntityRevision: 3,
+      reasonCode: "INCORRECT_IDENTITY_MATCH",
+    });
+    expect((await get(`/entities/${survivor.id}`).expect(200)).body).toMatchObject({
+      status: "ACTIVE",
+      revision: 3,
+    });
+    expect((await get(`/entities/${absorbed.id}`).expect(200)).body).toMatchObject({
+      status: "ACTIVE",
+      revision: 3,
+      mergedInto: null,
+    });
+    await expect(entities.resolve(workspace.id, absorbed.id)).resolves.toMatchObject({
+      id: absorbed.id,
+      revision: 3,
+    });
+
+    const persisted = await client.db.execute(sql`SELECT r.*, a.action, a.outcome,
+      a.reason, a.resource_id, a.resource_revision
+      FROM entity_merge_reversals r
+      JOIN audit_events a ON a.operation_id = r.operation_id
+      WHERE r.id = ${first.body.id}`);
+    expect(persisted.rows).toHaveLength(1);
+    expect(persisted.rows[0]).toMatchObject({
+      merge_id: mergeDecision.id,
+      survivor_entity_id: survivor.id,
+      restored_entity_id: absorbed.id,
+      actor_user_id: "owner",
+      action: "ENTITY_MERGE_REVERSE",
+      outcome: "AUTHORIZED",
+      reason: "INCORRECT_IDENTITY_MATCH",
+      resource_id: absorbed.id,
+      resource_revision: 3,
+    });
+    expect(
+      (
+        await client.db.execute(sql`SELECT id FROM entity_merges
+          WHERE id = ${mergeDecision.id}`)
+      ).rows,
+    ).toHaveLength(1);
+    expect(
+      (
+        await client.db.execute(sql`SELECT entity_id, revision FROM entity_revisions
+          WHERE entity_id IN (${survivor.id}, ${absorbed.id})`)
+      ).rows,
+    ).toHaveLength(6);
+    const events = await client.db.execute(sql`SELECT aggregate_type, payload
+      FROM platform_outbox_events WHERE event_type = 'ENTITY_MERGE_REVERSED'
+        AND aggregate_id = ${first.body.id}`);
+    expect(events.rows).toHaveLength(1);
+    expect(events.rows[0]).toMatchObject({
+      aggregate_type: "ENTITY_MERGE_REVERSAL",
+      payload: {
+        entityMergeId: mergeDecision.id,
+        restoredEntityId: absorbed.id,
+      },
+    });
+    expect(JSON.stringify(events.rows)).not.toContain("Reversal Candidate");
+    await expect(
+      client.db.execute(sql`UPDATE entity_merge_reversals
+        SET reason_code = 'MANUAL_REVIEW' WHERE id = ${first.body.id}`),
+    ).rejects.toThrow();
+    await reverseMerge(
+      mergeDecision.id,
+      { ...input, reasonCode: "MANUAL_REVIEW" },
+      key,
+      operationId,
+    ).expect(409);
+
+    const secondSurvivor = (
+      await create(workspace.id, newUuid(), {
+        ...body,
+        canonicalLabel: "Second Reversal Survivor",
+      }).expect(201)
+    ).body;
+    const secondAbsorbed = (
+      await create(workspace.id, newUuid(), {
+        ...body,
+        canonicalLabel: "Second Reversal Candidate",
+      }).expect(201)
+    ).body;
+    const secondMerge = (
+      await merge(
+        secondSurvivor.id,
+        {
+          absorbedEntityId: secondAbsorbed.id,
+          absorbedRevision: 1,
+          reasonCode: "MANUAL_REVIEW",
+        },
+        1,
+      ).expect(201)
+    ).body;
+    await reverseMerge(
+      secondMerge.id,
+      {
+        survivorRevision: 2,
+        absorbedRevision: 2,
+        reasonCode: "DATA_CORRECTION",
+      },
+      newUuid(),
+      operationId,
+    ).expect(409);
+  });
+
+  it("rejects unsafe merge reversal scope, state, revisions and principals", async () => {
+    const workspace = await fixture();
+    const survivor = (await create(workspace.id).expect(201)).body;
+    const absorbed = (
+      await create(workspace.id, newUuid(), {
+        ...body,
+        canonicalLabel: "Unsafe Reversal Candidate",
+      }).expect(201)
+    ).body;
+    const mergeDecision = (
+      await merge(
+        survivor.id,
+        {
+          absorbedEntityId: absorbed.id,
+          absorbedRevision: 1,
+          reasonCode: "MANUAL_REVIEW",
+        },
+        1,
+      ).expect(201)
+    ).body;
+    const input = (survivorRevision = 2, absorbedRevision = 2) => ({
+      survivorRevision,
+      absorbedRevision,
+      reasonCode: "DATA_CORRECTION",
+    });
+    await reverseMerge(newUuid(), input()).expect(404);
+    await reverseMerge(mergeDecision.id, input(1, 2)).expect(412);
+    await reverseMerge(mergeDecision.id, input(2, 1)).expect(412);
+    await reverseMerge(mergeDecision.id, input(), newUuid(), newUuid(), "viewer").expect(
+      404,
+    );
+    await reverseMerge(mergeDecision.id, input(), newUuid(), newUuid(), "worker").expect(
+      403,
+    );
+    await request(app.getHttpServer())
+      .post(`/api/v1/entity-merges/${mergeDecision.id}/actions/reverse`)
+      .set("idempotency-key", newUuid())
+      .set("x-audit-operation-id", newUuid())
+      .send(input())
+      .expect(401);
+    await request(app.getHttpServer())
+      .post(`/api/v1/entity-merges/${mergeDecision.id}/actions/reverse`)
+      .set("authorization", "Bearer owner")
+      .send(input())
+      .expect(400);
+    await reverseMerge(mergeDecision.id, input()).expect(201);
+    await reverseMerge(mergeDecision.id, input(3, 3)).expect(409);
+  });
+
+  it("serializes concurrent reversals of one merge decision", async () => {
+    const workspace = await fixture();
+    const survivor = (await create(workspace.id).expect(201)).body;
+    const absorbed = (
+      await create(workspace.id, newUuid(), {
+        ...body,
+        canonicalLabel: "Concurrent Reversal Candidate",
+      }).expect(201)
+    ).body;
+    const mergeDecision = (
+      await merge(
+        survivor.id,
+        {
+          absorbedEntityId: absorbed.id,
+          absorbedRevision: 1,
+          reasonCode: "MANUAL_REVIEW",
+        },
+        1,
+      ).expect(201)
+    ).body;
+    const command = {
+      survivorRevision: 2,
+      absorbedRevision: 2,
+      reasonCode: "WRONG_SURVIVOR_SELECTED",
+    };
+    const attempts = await Promise.all([
+      reverseMerge(mergeDecision.id, command),
+      reverseMerge(mergeDecision.id, command),
+    ]);
+    expect(attempts.map((attempt) => attempt.status).sort()).toEqual([201, 409]);
+    expect(
+      (
+        await client.db.execute(sql`SELECT id FROM entity_merge_reversals
+          WHERE merge_id = ${mergeDecision.id}`)
+      ).rows,
+    ).toHaveLength(1);
+  });
+
+  it("rolls back merge reversal when critical Audit cannot commit", async () => {
+    const workspace = await fixture();
+    const survivor = (await create(workspace.id).expect(201)).body;
+    const absorbed = (
+      await create(workspace.id, newUuid(), {
+        ...body,
+        canonicalLabel: "Reversal Rollback Candidate",
+      }).expect(201)
+    ).body;
+    const mergeDecision = (
+      await merge(
+        survivor.id,
+        {
+          absorbedEntityId: absorbed.id,
+          absorbedRevision: 1,
+          reasonCode: "MANUAL_REVIEW",
+        },
+        1,
+      ).expect(201)
+    ).body;
+    await client.db.execute(
+      sql.raw(
+        `CREATE FUNCTION fail_entity_merge_reverse_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action = 'ENTITY_MERGE_REVERSE' THEN RAISE EXCEPTION 'synthetic-private-reverse-audit-failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER fail_entity_merge_reverse_audit BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION fail_entity_merge_reverse_audit();`,
+      ),
+    );
+    try {
+      const failed = await reverseMerge(mergeDecision.id, {
+        survivorRevision: 2,
+        absorbedRevision: 2,
+        reasonCode: "INSUFFICIENT_EVIDENCE",
+      }).expect(503);
+      expect(JSON.stringify(failed.body)).not.toContain("synthetic-private");
+      expect((await get(`/entities/${survivor.id}`).expect(200)).body.revision).toBe(2);
+      expect((await get(`/entities/${absorbed.id}`).expect(200)).body).toMatchObject({
+        status: "MERGED",
+        revision: 2,
+        mergedInto: { id: survivor.id },
+      });
+      expect(
+        (
+          await client.db.execute(sql`SELECT id FROM entity_merge_reversals
+            WHERE merge_id = ${mergeDecision.id}`)
+        ).rows,
+      ).toHaveLength(0);
+      expect(
+        (
+          await client.db.execute(sql`SELECT id FROM platform_outbox_events
+            WHERE event_type = 'ENTITY_MERGE_REVERSED'
+              AND payload->>'entityMergeId' = ${mergeDecision.id}`)
+        ).rows,
+      ).toHaveLength(0);
+    } finally {
+      await client.db.execute(
+        sql.raw(
+          "DROP TRIGGER fail_entity_merge_reverse_audit ON audit_events; DROP FUNCTION fail_entity_merge_reverse_audit();",
+        ),
+      );
+    }
+  });
+
   it("encrypts identifier values and stores only keyed comparison fingerprints", async () => {
     const workspace = await fixture();
     const entity = (await create(workspace.id).expect(201)).body;
@@ -984,6 +1278,20 @@ describe("P2-003/P2-011 Entity Registry HTTP and PostgreSQL", () => {
       .post(`/api/v1/entities/${survivorEntityId}/actions/merge`)
       .set("authorization", `Bearer ${user}`)
       .set("if-match", `"${survivorRevision}"`)
+      .set("idempotency-key", key)
+      .set("x-audit-operation-id", operationId)
+      .send(input);
+  }
+  function reverseMerge(
+    mergeId: string,
+    input: object,
+    key = newUuid(),
+    operationId = newUuid(),
+    user = "owner",
+  ) {
+    return request(app.getHttpServer())
+      .post(`/api/v1/entity-merges/${mergeId}/actions/reverse`)
+      .set("authorization", `Bearer ${user}`)
       .set("idempotency-key", key)
       .set("x-audit-operation-id", operationId)
       .send(input);

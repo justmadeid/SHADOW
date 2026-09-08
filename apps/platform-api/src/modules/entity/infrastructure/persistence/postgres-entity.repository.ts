@@ -11,9 +11,11 @@ import {
   mergeEntities,
   normalizeCreateEntity,
   renameEntity,
+  reverseEntityMerge,
   type Entity,
   type EntityAlias,
   type EntityMergeDecision,
+  type EntityMergeReversalDecision,
   type EntityType,
   type UpdateEntityInput,
 } from "../../domain/entity.js";
@@ -151,6 +153,13 @@ export class PostgresEntityRepository implements EntityRepository {
         ${before ? sql`AND e.id < ${before}::uuid` : sql``}
       ORDER BY e.id DESC LIMIT ${bound}`);
     return (result.rows as EntityRow[]).map(mapEntity);
+  }
+
+  async findMerge(id: string): Promise<EntityMergeDecision | undefined> {
+    const result = await this.database.connection().execute(sql`
+      SELECT * FROM entity_merges WHERE id = ${id}`);
+    const row = result.rows[0] as EntityMergeRow | undefined;
+    return row ? mapEntityMerge(row) : undefined;
   }
 
   async update(
@@ -321,6 +330,128 @@ export class PostgresEntityRepository implements EntityRepository {
     return { decision, replayed: false };
   }
 
+  async reverseMerge(
+    command: Parameters<EntityRepository["reverseMerge"]>[0],
+  ): Promise<{ decision: EntityMergeReversalDecision; replayed: boolean }> {
+    this.requireTransaction();
+    const db = this.database.connection();
+    await db.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${`entity-merge-reverse:${command.actorUserId}:${command.idempotencyKey}`}, 0))`,
+    );
+    await db.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${`entity-merge-workspace:${command.workspaceId}`}, 0))`,
+    );
+
+    const replay = await db.execute(sql`
+      SELECT r.*, i.request_hash FROM entity_merge_reversal_idempotency i
+      JOIN entity_merge_reversals r ON r.id = i.reversal_id
+      WHERE i.user_id = ${command.actorUserId}
+        AND i.idempotency_key = ${command.idempotencyKey}`);
+    const replayRow = replay.rows[0] as
+      (EntityMergeReversalRow & { request_hash: string }) | undefined;
+    if (replayRow) {
+      if (replayRow.request_hash !== command.requestHash) conflict();
+      return { decision: mapEntityMergeReversal(replayRow), replayed: true };
+    }
+
+    const operation = await db.execute(sql`SELECT id FROM entity_merge_reversals
+      WHERE workspace_id = ${command.workspaceId}
+        AND operation_id = ${command.operationId}`);
+    if (operation.rows.length) reverseOperationConflict();
+
+    const mergeResult = await db.execute(sql`SELECT * FROM entity_merges
+      WHERE id = ${command.mergeId} AND workspace_id = ${command.workspaceId}`);
+    const mergeRow = mergeResult.rows[0] as EntityMergeRow | undefined;
+    if (!mergeRow) entityMergeNotFound();
+    const merge = mapEntityMerge(mergeRow);
+    const previous = await db.execute(sql`SELECT id FROM entity_merge_reversals
+      WHERE merge_id = ${merge.id}`);
+    if (previous.rows.length) alreadyReversed();
+
+    const current = new Map(
+      (
+        await this.findManyForUpdate([merge.survivorEntityId, merge.absorbedEntityId])
+      ).map((entity) => [entity.id, entity]),
+    );
+    const survivor = current.get(merge.survivorEntityId);
+    const absorbed = current.get(merge.absorbedEntityId);
+    if (
+      !survivor ||
+      !absorbed ||
+      survivor.workspaceId !== command.workspaceId ||
+      absorbed.workspaceId !== command.workspaceId
+    )
+      entityMergeNotFound();
+
+    const now = new Date();
+    const reversed = reverseEntityMerge(
+      survivor,
+      absorbed,
+      merge,
+      command.survivorRevision,
+      command.absorbedRevision,
+      now,
+    );
+    const survivorUpdated = await db.execute(sql`UPDATE entities
+      SET revision = ${reversed.survivor.revision},
+        updated_at = ${reversed.survivor.updatedAt}
+      WHERE id = ${survivor.id} AND workspace_id = ${command.workspaceId}
+        AND revision = ${survivor.revision} RETURNING id`);
+    const absorbedUpdated = await db.execute(sql`UPDATE entities
+      SET status = ${reversed.restored.status}, merged_into_id = null,
+        revision = ${reversed.restored.revision},
+        updated_at = ${reversed.restored.updatedAt}
+      WHERE id = ${absorbed.id} AND workspace_id = ${command.workspaceId}
+        AND revision = ${absorbed.revision} RETURNING id`);
+    if (!survivorUpdated.rows.length || !absorbedUpdated.rows.length) revisionConflict();
+
+    const decision: EntityMergeReversalDecision = Object.freeze({
+      id: newUuid(),
+      operationId: command.operationId,
+      entityMergeId: merge.id,
+      workspaceId: command.workspaceId,
+      survivorEntityId: survivor.id,
+      restoredEntityId: absorbed.id,
+      survivorRevision: reversed.survivor.revision,
+      restoredEntityRevision: reversed.restored.revision,
+      reasonCode: command.reasonCode,
+      createdAt: now.toISOString(),
+    });
+    await db.execute(sql`INSERT INTO entity_merge_reversals
+      (id, operation_id, merge_id, workspace_id, survivor_entity_id,
+       restored_entity_id, survivor_revision_before, survivor_revision_after,
+       restored_revision_before, restored_revision_after, reason_code,
+       actor_user_id, created_at)
+      VALUES (${decision.id}, ${decision.operationId}, ${decision.entityMergeId},
+        ${decision.workspaceId}, ${decision.survivorEntityId},
+        ${decision.restoredEntityId}, ${survivor.revision},
+        ${decision.survivorRevision}, ${absorbed.revision},
+        ${decision.restoredEntityRevision}, ${decision.reasonCode},
+        ${command.actorUserId}, ${decision.createdAt})`);
+    await db.execute(sql`INSERT INTO entity_merge_reversal_idempotency
+      (user_id, idempotency_key, request_hash, reversal_id, created_at)
+      VALUES (${command.actorUserId}, ${command.idempotencyKey},
+        ${command.requestHash}, ${decision.id}, ${decision.createdAt})`);
+    await this.recordRevision(reversed.survivor, command.actorUserId);
+    await this.recordRevision(reversed.restored, command.actorUserId);
+    await this.outbox.enqueue({
+      type: "ENTITY_MERGE_REVERSED",
+      version: 1,
+      aggregate: { type: "ENTITY_MERGE_REVERSAL", id: decision.id },
+      payload: {
+        entityMergeReversalId: decision.id,
+        entityMergeId: decision.entityMergeId,
+        workspaceId: decision.workspaceId,
+        survivorEntityId: decision.survivorEntityId,
+        restoredEntityId: decision.restoredEntityId,
+        survivorRevision: decision.survivorRevision,
+        restoredEntityRevision: decision.restoredEntityRevision,
+      },
+      occurredAt: now,
+    });
+    return { decision, replayed: false };
+  }
+
   private async assertMergeDepth(workspaceId: string, absorbedEntityId: string) {
     const result = await this.database.connection().execute(sql`
       WITH RECURSIVE predecessors(id, depth, path) AS (
@@ -447,6 +578,18 @@ type EntityMergeRow = {
   reason_code: EntityMergeDecision["reasonCode"];
   created_at: Date | string;
 };
+type EntityMergeReversalRow = {
+  id: string;
+  operation_id: string;
+  merge_id: string;
+  workspace_id: string;
+  survivor_entity_id: string;
+  restored_entity_id: string;
+  survivor_revision_after: number;
+  restored_revision_after: number;
+  reason_code: EntityMergeReversalDecision["reasonCode"];
+  created_at: Date | string;
+};
 
 function mapEntity(row: EntityRow): Entity {
   return Object.freeze({
@@ -491,6 +634,23 @@ function mapEntityMerge(row: EntityMergeRow): EntityMergeDecision {
   });
 }
 
+function mapEntityMergeReversal(
+  row: EntityMergeReversalRow,
+): EntityMergeReversalDecision {
+  return Object.freeze({
+    id: row.id,
+    operationId: row.operation_id,
+    entityMergeId: row.merge_id,
+    workspaceId: row.workspace_id,
+    survivorEntityId: row.survivor_entity_id,
+    restoredEntityId: row.restored_entity_id,
+    survivorRevision: row.survivor_revision_after,
+    restoredEntityRevision: row.restored_revision_after,
+    reasonCode: row.reason_code,
+    createdAt: new Date(row.created_at).toISOString(),
+  });
+}
+
 function conflict(): never {
   throw new AppError({
     code: "CONFLICT_IDEMPOTENCY_KEY_REUSED",
@@ -503,6 +663,30 @@ function operationConflict(): never {
   throw new AppError({
     code: "ENTITY_MERGE_OPERATION_CONFLICT",
     message: "The audit operation ID was already used for another Entity merge.",
+    statusCode: 409,
+  });
+}
+
+function reverseOperationConflict(): never {
+  throw new AppError({
+    code: "ENTITY_MERGE_REVERSE_OPERATION_CONFLICT",
+    message: "The audit operation ID was already used for another merge reversal.",
+    statusCode: 409,
+  });
+}
+
+function entityMergeNotFound(): never {
+  throw new AppError({
+    code: "ENTITY_MERGE_NOT_FOUND",
+    message: "Entity merge was not found.",
+    statusCode: 404,
+  });
+}
+
+function alreadyReversed(): never {
+  throw new AppError({
+    code: "ENTITY_MERGE_ALREADY_REVERSED",
+    message: "Entity merge has already been reversed.",
     statusCode: 409,
   });
 }

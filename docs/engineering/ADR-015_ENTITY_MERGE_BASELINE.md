@@ -50,9 +50,10 @@ survivor requirements prevent application-created cycles.
 ## Correction hook
 
 The immutable merge decision deliberately stores survivor/absorbed IDs, operation
-identity, both before/after revisions, reason, actor and timestamp. P2-012 will add a
-reverse command contract against this artifact. This slice does not implement reverse
-merge or complex redistribution, and callers must not edit history to simulate one.
+identity, both before/after revisions, reason, actor and timestamp. P2-012 implements
+the bounded correction hook against this artifact in
+[ADR-016](ADR-016_ENTITY_MERGE_REVERSAL_HOOK.md). Neither operation edits merge
+history or performs complex data redistribution.
 
 ## API and error semantics
 
