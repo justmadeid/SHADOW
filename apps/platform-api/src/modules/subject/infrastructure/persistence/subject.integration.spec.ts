@@ -65,6 +65,7 @@ describe("P2 Subject HTTP and PostgreSQL", () => {
       "../../../governance/infrastructure/persistence/migrations/0001_create_governance.sql",
       "../../../governance/infrastructure/persistence/migrations/0002_case_membership.sql",
       "../../../governance/infrastructure/persistence/migrations/0003_subject_permissions.sql",
+      "../../../governance/infrastructure/persistence/migrations/0004_workflow_run_permissions.sql",
       "./migrations/0001_create_subject.sql",
       "./migrations/0002_create_subject_seed.sql",
       "./migrations/0003_subject_resolution.sql",

@@ -14,6 +14,12 @@ export const CASE_ROLE_PERMISSIONS: Record<CaseRole, readonly Permission[]> = {
     "INVESTIGATION_VIEW",
     "INVESTIGATION_CREATE",
     "INVESTIGATION_UPDATE",
+    "WORKFLOW_VIEW",
+    "WORKFLOW_CREATE",
+    "WORKFLOW_UPDATE",
+    "RUN_CREATE",
+    "RUN_VIEW",
+    "RUN_CANCEL",
   ],
   EDITOR: [
     "SUBJECT_VIEW",
@@ -24,8 +30,20 @@ export const CASE_ROLE_PERMISSIONS: Record<CaseRole, readonly Permission[]> = {
     "INVESTIGATION_VIEW",
     "INVESTIGATION_CREATE",
     "INVESTIGATION_UPDATE",
+    "WORKFLOW_VIEW",
+    "WORKFLOW_CREATE",
+    "WORKFLOW_UPDATE",
+    "RUN_CREATE",
+    "RUN_VIEW",
+    "RUN_CANCEL",
   ],
-  VIEWER: ["CASE_VIEW", "INVESTIGATION_VIEW", "SUBJECT_VIEW"],
+  VIEWER: [
+    "CASE_VIEW",
+    "INVESTIGATION_VIEW",
+    "SUBJECT_VIEW",
+    "WORKFLOW_VIEW",
+    "RUN_VIEW",
+  ],
 };
 
 export type CaseMembership = {

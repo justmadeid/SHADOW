@@ -8,6 +8,8 @@ import { ResolutionModule } from "./modules/resolution/index.js";
 import { TargetProfileModule } from "./modules/target-profile/index.js";
 import { GovernanceModule } from "./modules/governance/index.js";
 import { InvestigationModule } from "./modules/investigation/index.js";
+import { WorkflowModule } from "./modules/workflow/index.js";
+import { ExecutionModule } from "./modules/execution/index.js";
 import { WorkspaceModule } from "./modules/workspace/index.js";
 import { AuthenticationModule } from "./platform/auth/index.js";
 import { DatabaseModule } from "./platform/database/database.module.js";
@@ -34,6 +36,8 @@ import { SystemController } from "./presentation/shared/system.controller.js";
     GovernanceModule,
     CaseModule,
     InvestigationModule,
+    WorkflowModule,
+    ExecutionModule,
     SubjectModule,
     EntityModule,
     ResolutionModule,

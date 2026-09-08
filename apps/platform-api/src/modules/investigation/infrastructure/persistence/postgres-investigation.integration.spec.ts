@@ -71,6 +71,10 @@ describe("Investigation persistence", () => {
         "../../../governance/infrastructure/persistence/migrations/0003_subject_permissions.sql",
         import.meta.url,
       ),
+      new URL(
+        "../../../governance/infrastructure/persistence/migrations/0004_workflow_run_permissions.sql",
+        import.meta.url,
+      ),
     ]) {
       await client.db.execute(sql.raw(fs.readFileSync(migration, "utf8")));
     }
