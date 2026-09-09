@@ -12,3 +12,8 @@ export async function startPostgresTestContainer() {
     databaseUrl: container.getConnectionUri(),
   };
 }
+
+export {
+  startRedisTestContainer,
+  type StartedRedisTestContainer,
+} from "./containers/redis.js";

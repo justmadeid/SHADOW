@@ -26,8 +26,15 @@ info:
     P3-001 adds a read-only NodeDefinition capability catalog; there is no public
     write endpoint. P3-002 adds NodeInstance/InputBinding/WorkflowEdge resources
     scoped to an Investigation. P3-003 adds the Run aggregate: create/view/list,
-    cancel, and business retry. A Run starts and remains QUEUED in this slice;
-    no worker or ExecutionAttempt exists yet to advance it further.
+    cancel, and business retry. P3-004 adds the internal worker API
+    (`/internal/v1`, a distinct trust boundary served by a SERVICE principal,
+    never a browser user token) for ExecutionAttempt lease/heartbeat/terminal
+    status. P3-005 adds a read-only ExecutionPlan view of the current active
+    attempt. Both require a currently active ExecutionAttempt where noted;
+    `PUT /internal/v1/runs/{runId}/checkpoint` from the domain skeleton is
+    deliberately not implemented yet (checkpoint/resume is P3-009), and
+    `connector`/`checkpoint` in ExecutionPlan are always null in this slice
+    (Source Registry is P4-001+; checkpoint/resume is P3-009).
   license:
     name: Proprietary
     identifier: LicenseRef-Proprietary
@@ -1677,6 +1684,239 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
         "412": { $ref: "#/components/responses/CaseRevisionMismatch" }
+  /runs/{runId}/attempts:
+    servers:
+      - url: /internal/v1
+    parameters:
+      - $ref: "#/components/parameters/RunId"
+    post:
+      operationId: createExecutionAttempt
+      summary: Lease a new ExecutionAttempt on a Run
+      tags: [Execution]
+      security:
+        - oidcAccessToken: []
+      description: >-
+        Internal worker API; requires a SERVICE principal (403
+        AUTH_SERVICE_REQUIRED for a USER principal), never Case-membership
+        authorization. Idempotent on (workerIdentity, Idempotency-Key).
+        Rejects a terminal Run (409 RUN_NOT_ATTEMPTABLE) and a still-live
+        attempt (409 RUN_ATTEMPT_ALREADY_ACTIVE). A stale LEASED/RUNNING
+        attempt whose lease has expired is lazily marked LOST first. On the
+        first attempt for a Run this also transitions the Run QUEUED ->
+        RUNNING and sets startedAt (see ADR-020). Infrastructure retry
+        (P3-004 acceptance criterion) creates a new Attempt on the same Run
+        after a retryable fail.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [leaseOwner, leaseDurationSeconds]
+              properties:
+                leaseOwner: { type: string, minLength: 1, maxLength: 200 }
+                leaseDurationSeconds: { type: integer, minimum: 1, maximum: 300 }
+      responses:
+        "201":
+          description: Created (or idempotently replayed) ExecutionAttempt
+          headers:
+            ETag: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExecutionAttempt" }
+        "400": { $ref: "#/components/responses/RunError" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/ServicePrincipalRequired" }
+        "404": { $ref: "#/components/responses/RunNotFound" }
+        "409":
+          description: Run not attemptable, an attempt is already active, or idempotency conflict
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+  /runs/{runId}/progress:
+    servers:
+      - url: /internal/v1
+    parameters:
+      - $ref: "#/components/parameters/RunId"
+    post:
+      operationId: recordExecutionAttemptProgress
+      summary: Heartbeat and record factual progress for the Run's active ExecutionAttempt
+      tags: [Execution]
+      security:
+        - oidcAccessToken: []
+      description: >-
+        The only heartbeat mechanism; extends the active attempt's lease by
+        its fixed leaseDurationSeconds and flips LEASED -> RUNNING on first
+        call. total stays nullable and is never used to derive a percentage
+        (Execution Gate). No If-Match is required: correctness comes from
+        attemptId matching the Run's current active attempt.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [attemptId, stage]
+              properties:
+                attemptId: { type: string, format: uuid }
+                stage: { type: string, minLength: 1, maxLength: 64 }
+                processed: { type: [integer, "null"], minimum: 0 }
+                produced: { type: [integer, "null"], minimum: 0 }
+                total: { type: [integer, "null"], minimum: 0 }
+      responses:
+        "200":
+          description: Updated ExecutionAttempt
+          headers:
+            ETag: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExecutionAttempt" }
+        "400": { $ref: "#/components/responses/RunError" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/ServicePrincipalRequired" }
+        "404":
+          description: ExecutionAttempt absent
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "409":
+          description: attemptId is not the Run's current active attempt
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+  /runs/{runId}/actions/complete:
+    servers:
+      - url: /internal/v1
+    parameters:
+      - $ref: "#/components/parameters/RunId"
+    post:
+      operationId: completeRun
+      summary: Mark the Run's active ExecutionAttempt SUCCEEDED and the Run terminal
+      tags: [Execution]
+      security:
+        - oidcAccessToken: []
+      description: >-
+        Idempotent by exact attempt+outcome replay: a Run already terminal
+        with this same attempt and outcome returns the current state; a
+        different attempt or outcome is 409 RUN_ALREADY_TERMINAL.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [attemptId, outcome]
+              properties:
+                attemptId: { type: string, format: uuid }
+                outcome: { type: string, enum: [COMPLETED, PARTIAL] }
+      responses:
+        "200":
+          description: Terminal Run
+          headers:
+            ETag: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Run" }
+        "400": { $ref: "#/components/responses/RunError" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/ServicePrincipalRequired" }
+        "404":
+          description: Run or ExecutionAttempt absent
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "409":
+          description: attemptId is not the Run's current active attempt, or the Run is already terminal with a different attempt/outcome
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+  /runs/{runId}/actions/fail:
+    servers:
+      - url: /internal/v1
+    parameters:
+      - $ref: "#/components/parameters/RunId"
+    post:
+      operationId: failRun
+      summary: Mark the Run's active ExecutionAttempt FAILED, requeueing or terminating the Run
+      tags: [Execution]
+      security:
+        - oidcAccessToken: []
+      description: >-
+        retryable=true requeues the Run (QUEUED) so a new ExecutionAttempt
+        can be created on it (P3-004 acceptance criterion); retryable=false
+        terminates the Run FAILED. Only a boolean retryable flag exists in
+        this slice, not an error-code taxonomy (P3-011).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [attemptId, errorCode, retryable]
+              properties:
+                attemptId: { type: string, format: uuid }
+                errorCode:
+                  type: string
+                  pattern: '^[A-Z][A-Z0-9_]{2,63}$'
+                retryable: { type: boolean }
+      responses:
+        "200":
+          description: Requeued or terminal Run
+          headers:
+            ETag: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Run" }
+        "400": { $ref: "#/components/responses/RunError" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/ServicePrincipalRequired" }
+        "404":
+          description: Run or ExecutionAttempt absent
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "409":
+          description: attemptId is not the Run's current active attempt, or the Run is already terminal
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+  /runs/{runId}/execution-plan:
+    servers:
+      - url: /internal/v1
+    parameters:
+      - $ref: "#/components/parameters/RunId"
+    get:
+      operationId: getExecutionPlan
+      summary: Read the ExecutionPlan for the Run's current active ExecutionAttempt
+      tags: [Execution]
+      security:
+        - oidcAccessToken: []
+      description: >-
+        Requires a currently active (LEASED/RUNNING, unexpired) Attempt, else
+        409 RUN_EXECUTION_PLAN_NOT_AVAILABLE. connector and checkpoint are
+        always null in this slice (see ADR-021). Structurally never carries a
+        secret/apiKey/token/credential/password-shaped field.
+      responses:
+        "200":
+          description: ExecutionPlan for the Run's active Attempt
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExecutionPlan" }
+        "400": { $ref: "#/components/responses/RunError" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/ServicePrincipalRequired" }
+        "404": { $ref: "#/components/responses/RunNotFound" }
+        "409":
+          description: The Run has no currently active ExecutionAttempt
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
   /system/info:
     get:
       operationId: getSystemInfo
@@ -1814,6 +2054,11 @@ components:
           schema: { $ref: "#/components/schemas/ErrorResponse" }
     UserPrincipalRequired:
       description: Operation requires a user principal
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+    ServicePrincipalRequired:
+      description: Internal worker API operation requires an authenticated SERVICE principal
       content:
         application/json:
           schema: { $ref: "#/components/schemas/ErrorResponse" }
@@ -2950,6 +3195,125 @@ components:
         updatedAt: { type: string, format: date-time }
         startedAt: { type: [string, "null"], format: date-time }
         completedAt: { type: [string, "null"], format: date-time }
+    AttemptProgress:
+      type: object
+      additionalProperties: false
+      required: [stage, processed, produced, total]
+      properties:
+        stage: { type: string, minLength: 1, maxLength: 64 }
+        processed: { type: [integer, "null"], minimum: 0 }
+        produced: { type: [integer, "null"], minimum: 0 }
+        total:
+          type: [integer, "null"]
+          minimum: 0
+          description: Never used to derive a percentage; stays null when the total is unknown.
+    ExecutionAttemptStatus:
+      type: string
+      enum: [LEASED, RUNNING, SUCCEEDED, FAILED, LOST]
+    ExecutionAttempt:
+      type: object
+      additionalProperties: false
+      description: >-
+        Physical attempt (ADR-020). Run != ExecutionAttempt: this is a
+        worker's lease on a Run, not the Run itself.
+      required:
+        - id
+        - runId
+        - workspaceId
+        - caseId
+        - attemptNumber
+        - workerIdentity
+        - leaseOwner
+        - leaseDurationSeconds
+        - leasedUntil
+        - status
+        - errorCode
+        - retryable
+        - lastProgress
+        - startedAt
+        - heartbeatAt
+        - completedAt
+        - revision
+        - createdAt
+        - updatedAt
+      properties:
+        id: { type: string, format: uuid }
+        runId: { type: string, format: uuid }
+        workspaceId: { type: string, format: uuid }
+        caseId: { type: string, format: uuid }
+        attemptNumber: { type: integer, minimum: 1 }
+        workerIdentity: { type: string }
+        leaseOwner: { type: string, minLength: 1, maxLength: 200 }
+        leaseDurationSeconds: { type: integer, minimum: 1, maximum: 300 }
+        leasedUntil: { type: string, format: date-time }
+        status: { $ref: "#/components/schemas/ExecutionAttemptStatus" }
+        errorCode: { type: [string, "null"] }
+        retryable: { type: [boolean, "null"] }
+        lastProgress:
+          oneOf:
+            - { $ref: "#/components/schemas/AttemptProgress" }
+            - { type: "null" }
+        startedAt: { type: string, format: date-time }
+        heartbeatAt: { type: string, format: date-time }
+        completedAt: { type: [string, "null"], format: date-time }
+        revision: { type: integer, minimum: 1 }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    ExecutionPlan:
+      type: object
+      additionalProperties: false
+      description: >-
+        Immutable worker-facing contract (ADR-021). connector and checkpoint
+        are always null in this slice: Source Registry is P4-001+ and
+        checkpoint/resume is P3-009, neither exists yet. Structurally never
+        carries a secret/apiKey/token/credential/password-shaped field.
+      required:
+        - runId
+        - attempt
+        - capability
+        - connector
+        - input
+        - limits
+        - accessContext
+        - checkpoint
+      properties:
+        runId: { type: string, format: uuid }
+        attempt:
+          type: object
+          additionalProperties: false
+          required: [id, attemptNumber, leaseOwner]
+          properties:
+            id: { type: string, format: uuid }
+            attemptNumber: { type: integer, minimum: 1 }
+            leaseOwner: { type: string }
+        capability: { type: string }
+        connector:
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required: [connectorId, version]
+              properties:
+                connectorId: { type: string }
+                version: { type: integer, minimum: 1 }
+            - { type: "null" }
+        input: { $ref: "#/components/schemas/RunInputSnapshot" }
+        limits:
+          type: object
+          additionalProperties: false
+          required: [timeoutSeconds]
+          properties:
+            timeoutSeconds: { type: integer, minimum: 1 }
+        accessContext:
+          type: object
+          additionalProperties: false
+          required: [workspaceId, caseId, investigationId, triggeredByUserId]
+          properties:
+            workspaceId: { type: string, format: uuid }
+            caseId: { type: string, format: uuid }
+            investigationId: { type: string, format: uuid }
+            triggeredByUserId: { type: string }
+        checkpoint:
+          type: "null"
     SystemInfo:
       type: object
       additionalProperties: false

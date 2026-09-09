@@ -44,6 +44,7 @@ const platformApiSchema = z
     APP_PORT: z.coerce.number().int().positive().default(3000),
     LOG_LEVEL: z.string().default("info"),
     DATABASE_URL: z.string().min(1),
+    REDIS_URL: z.string().min(1),
     OTEL_EXPORTER_OTLP_ENDPOINT: z.string().url().default("http://127.0.0.1:4318"),
     OIDC_ISSUER: z.string().url(),
     OIDC_AUDIENCE: z.string().min(1),

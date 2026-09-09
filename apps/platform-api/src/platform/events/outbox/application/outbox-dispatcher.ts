@@ -8,6 +8,16 @@ export type OutboxDispatcherOptions = {
   leaseOwner: string;
   batchSize?: number;
   leaseDurationMs?: number;
+  /**
+   * Restricts this dispatch cycle to the given event types. Omitting it
+   * claims every unpublished event regardless of type — safe only for a
+   * publisher that can route every event type that has ever been enqueued
+   * into the shared `platform_outbox_events` table. Any dispatcher wired to
+   * a type-specific publisher (e.g. BullMQ's RUN_CREATED-only publisher)
+   * must always pass this, or it will silently mark unrelated events as
+   * "published" without ever delivering them.
+   */
+  eventTypes?: readonly string[];
 };
 
 export type DispatchCycleResult = {
@@ -28,6 +38,7 @@ export class OutboxDispatcher {
       leaseOwner: options.leaseOwner,
       batchSize: options.batchSize ?? 100,
       leaseDurationMs: options.leaseDurationMs ?? 30_000,
+      ...(options.eventTypes ? { eventTypes: options.eventTypes } : {}),
     });
 
     let published = 0;

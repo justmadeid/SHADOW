@@ -66,6 +66,7 @@ describe("P2-005 through P2-008 Resolution HTTP and PostgreSQL", () => {
     started = await startPostgresTestContainer();
     vi.stubEnv("APP_ENV", "test");
     vi.stubEnv("DATABASE_URL", started.databaseUrl);
+    vi.stubEnv("REDIS_URL", "redis://127.0.0.1:6379");
     vi.stubEnv("OIDC_ISSUER", "https://identity.example.test");
     vi.stubEnv("OIDC_AUDIENCE", "platform-api-test");
     vi.stubEnv("OIDC_JWKS_URI", "https://identity.example.test/.well-known/jwks.json");

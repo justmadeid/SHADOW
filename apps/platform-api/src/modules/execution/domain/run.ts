@@ -24,6 +24,21 @@ const TERMINAL_CANCELLABLE_FROM: readonly RunStatus[] = ["QUEUED", "RUNNING"];
 // to retry. Only FAILED/PARTIAL/CANCELLED may be retried.
 const RETRYABLE_FROM: readonly RunStatus[] = ["FAILED", "PARTIAL", "CANCELLED"];
 
+export const RUN_TERMINAL_STATUSES: readonly RunStatus[] = [
+  "COMPLETED",
+  "PARTIAL",
+  "FAILED",
+  "CANCELLED",
+];
+
+/** ExecutionAttempt-driven terminal outcomes a Run can reach from RUNNING. */
+export const RUN_TERMINAL_OUTCOMES = ["COMPLETED", "PARTIAL", "FAILED"] as const;
+export type RunTerminalOutcome = (typeof RUN_TERMINAL_OUTCOMES)[number];
+
+const STARTABLE_FROM: readonly RunStatus[] = ["QUEUED"];
+const REQUEUEABLE_FROM: readonly RunStatus[] = ["RUNNING"];
+const TERMINABLE_FROM: readonly RunStatus[] = ["RUNNING"];
+
 /**
  * A frozen structural copy of the NodeInstance's configuration and
  * InputBindings at Run-creation time. This is NOT a live-resolved value
@@ -137,6 +152,88 @@ export function assertRetryable(current: Run): void {
       statusCode: 409,
       details: { currentStatus: current.status },
     });
+}
+
+export function isRunTerminal(status: RunStatus): boolean {
+  return RUN_TERMINAL_STATUSES.includes(status);
+}
+
+/**
+ * QUEUED -> RUNNING. Used only from the ExecutionAttempt code path (internal
+ * worker API) when the first attempt for a Run is leased — never exposed as a
+ * public HTTP mutation on Run's own controller. Sets startedAt the first time
+ * a Run actually starts; a later attempt on the same Run (after a LOST
+ * attempt) does not call this again because the Run is already RUNNING.
+ */
+export function assertStartable(current: Run): void {
+  if (!STARTABLE_FROM.includes(current.status))
+    throw new AppError({
+      code: "RUN_INVALID_STATUS_TRANSITION",
+      message: "Only a QUEUED Run can start.",
+      statusCode: 409,
+      details: { currentStatus: current.status },
+    });
+}
+
+export function startRun(current: Run, now: Date): Run {
+  assertStartable(current);
+  return Object.freeze({
+    ...current,
+    status: "RUNNING",
+    startedAt: current.startedAt ?? now,
+    revision: current.revision + 1,
+    updatedAt: now,
+  });
+}
+
+/**
+ * RUNNING -> QUEUED. Used when an ExecutionAttempt fails with retryable=true;
+ * this is the literal mechanism behind the P3-004 acceptance criterion
+ * ("infrastructure retry creates new Attempt on same Run").
+ */
+export function assertRequeueable(current: Run): void {
+  if (!REQUEUEABLE_FROM.includes(current.status))
+    throw new AppError({
+      code: "RUN_INVALID_STATUS_TRANSITION",
+      message: "Only a RUNNING Run can be requeued.",
+      statusCode: 409,
+      details: { currentStatus: current.status },
+    });
+}
+
+export function requeueRun(current: Run, now: Date): Run {
+  assertRequeueable(current);
+  return Object.freeze({
+    ...current,
+    status: "QUEUED",
+    revision: current.revision + 1,
+    updatedAt: now,
+  });
+}
+
+/**
+ * RUNNING -> COMPLETED|PARTIAL|FAILED. Used when an ExecutionAttempt finishes
+ * (complete action, or a non-retryable fail action). Sets completedAt.
+ */
+export function assertTerminable(current: Run): void {
+  if (!TERMINABLE_FROM.includes(current.status))
+    throw new AppError({
+      code: "RUN_INVALID_STATUS_TRANSITION",
+      message: "Only a RUNNING Run can be terminated by an ExecutionAttempt outcome.",
+      statusCode: 409,
+      details: { currentStatus: current.status },
+    });
+}
+
+export function terminateRun(current: Run, outcome: RunTerminalOutcome, now: Date): Run {
+  assertTerminable(current);
+  return Object.freeze({
+    ...current,
+    status: outcome,
+    completedAt: current.completedAt ?? now,
+    revision: current.revision + 1,
+    updatedAt: now,
+  });
 }
 
 function freezeSnapshot(snapshot: RunInputSnapshot): RunInputSnapshot {

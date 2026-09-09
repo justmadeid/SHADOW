@@ -110,4 +110,61 @@ describe("PostgresOutboxStore", () => {
     expect(first).toHaveLength(1);
     expect(second).toHaveLength(0);
   });
+
+  it(
+    "claim({eventTypes}) restricts the batch to those types only, leaving other pending " +
+      "events both unclaimed and unpublished (the safety property a type-specific dispatcher " +
+      "such as the BullMQ RUN_CREATED publisher depends on)",
+    async () => {
+      await transactions.run(async () => {
+        await store.enqueue({
+          type: "SUBJECT_CREATED",
+          version: 1,
+          payload: { resourceId: "subject-1" },
+        });
+        await store.enqueue({
+          type: "RUN_CREATED",
+          version: 1,
+          payload: { resourceId: "run-1" },
+        });
+      });
+
+      const claimed = await store.claim({
+        leaseOwner: "run-created-dispatcher",
+        batchSize: 10,
+        leaseDurationMs: 30_000,
+        eventTypes: ["RUN_CREATED"],
+      });
+
+      expect(claimed).toHaveLength(1);
+      expect(claimed[0]?.type).toBe("RUN_CREATED");
+
+      const unfiltered = await client.db.execute(sql`
+        SELECT event_type, published_at, lease_owner
+        FROM platform_outbox_events
+        WHERE event_type = 'SUBJECT_CREATED'
+      `);
+      expect(unfiltered.rows).toHaveLength(1);
+      expect(unfiltered.rows[0]?.published_at).toBeNull();
+      expect(unfiltered.rows[0]?.lease_owner).toBeNull();
+    },
+  );
+
+  it("omitting eventTypes preserves the exact prior unfiltered claim behavior", async () => {
+    await transactions.run(async () => {
+      await store.enqueue({
+        type: "ENTITY_MERGED",
+        version: 1,
+        payload: { resourceId: "entity-1" },
+      });
+    });
+
+    const claimed = await store.claim({
+      leaseOwner: "unfiltered-dispatcher",
+      batchSize: 10,
+      leaseDurationMs: 30_000,
+    });
+
+    expect(claimed.some((event) => event.type === "ENTITY_MERGED")).toBe(true);
+  });
 });
