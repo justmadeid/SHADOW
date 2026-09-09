@@ -90,12 +90,26 @@ export class PostgresOutboxStore implements OutboxStore {
     leaseOwner: string;
     batchSize: number;
     leaseDurationMs: number;
+    eventTypes?: readonly string[];
     now?: Date;
   }): Promise<OutboxEventRecord[]> {
     const batchSize = clampInteger(options.batchSize, 1, 500);
     const leaseDurationMs = clampInteger(options.leaseDurationMs, 1_000, 15 * 60_000);
     const now = options.now ?? new Date();
     const leasedUntil = new Date(now.getTime() + leaseDurationMs);
+    // Built as ARRAY[$1, $2, ...] (each type its own bound parameter) rather
+    // than a single array-typed parameter: the underlying driver does not
+    // serialize a JS array into Postgres array-literal syntax for a raw sql
+    // template parameter, so binding it directly produces a malformed array
+    // literal (e.g. a single-element array serializes to just "RUN_CREATED"
+    // instead of "{RUN_CREATED}").
+    const eventTypeFilter =
+      options.eventTypes && options.eventTypes.length > 0
+        ? sql`AND event_type = ANY(ARRAY[${sql.join(
+            options.eventTypes.map((type) => sql`${type}`),
+            sql`, `,
+          )}]::text[])`
+        : sql``;
 
     const result = await this.database.connection().execute(sql`
       WITH candidates AS (
@@ -107,6 +121,7 @@ export class PostgresOutboxStore implements OutboxStore {
             leased_until IS NULL
             OR leased_until <= ${now}
           )
+          ${eventTypeFilter}
         ORDER BY available_at ASC, occurred_at ASC, id ASC
         FOR UPDATE SKIP LOCKED
         LIMIT ${batchSize}

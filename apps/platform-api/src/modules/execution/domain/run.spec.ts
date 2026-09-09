@@ -1,6 +1,18 @@
 import { describe, expect, it } from "vitest";
 import { AppError } from "../../../platform/errors/index.js";
-import { assertCancellable, assertRetryable, cancelRun, createRun } from "./run.js";
+import {
+  assertCancellable,
+  assertRequeueable,
+  assertRetryable,
+  assertStartable,
+  assertTerminable,
+  cancelRun,
+  createRun,
+  isRunTerminal,
+  requeueRun,
+  startRun,
+  terminateRun,
+} from "./run.js";
 
 const now = new Date("2026-09-08T00:00:00.000Z");
 const base = {
@@ -95,5 +107,64 @@ describe("assertRetryable", () => {
     const queued = createRun(base, now);
     expect(() => assertRetryable(queued)).toThrow(AppError);
     expect(() => assertRetryable({ ...queued, status: "RUNNING" })).toThrow(AppError);
+  });
+});
+
+describe("startRun (ExecutionAttempt-driven QUEUED -> RUNNING)", () => {
+  it("transitions QUEUED to RUNNING and sets startedAt", () => {
+    const run = createRun(base, now);
+    const started = startRun(run, now);
+    expect(started.status).toBe("RUNNING");
+    expect(started.startedAt).toEqual(now);
+    expect(started.revision).toBe(2);
+  });
+
+  it("does not overwrite an already-set startedAt", () => {
+    const run = createRun(base, now);
+    const first = startRun(run, now);
+    const later = new Date(now.getTime() + 60_000);
+    // Simulate re-deriving from a row whose status regressed back to QUEUED
+    // only conceptually is invalid; startRun should preserve an existing
+    // startedAt rather than clobber it if ever called on a row that already
+    // has one set.
+    const requeued = { ...first, status: "QUEUED" as const };
+    const restarted = startRun(requeued, later);
+    expect(restarted.startedAt).toEqual(now);
+  });
+
+  it("rejects starting a non-QUEUED Run", () => {
+    const run = { ...createRun(base, now), status: "RUNNING" as const };
+    expect(() => assertStartable(run)).toThrow(AppError);
+  });
+});
+
+describe("requeueRun (ExecutionAttempt retryable fail -> QUEUED)", () => {
+  it("transitions RUNNING to QUEUED and increments revision", () => {
+    const run = { ...createRun(base, now), status: "RUNNING" as const };
+    const requeued = requeueRun(run, now);
+    expect(requeued.status).toBe("QUEUED");
+    expect(requeued.revision).toBe(2);
+  });
+
+  it("rejects requeue from a non-RUNNING Run", () => {
+    const run = createRun(base, now);
+    expect(() => assertRequeueable(run)).toThrow(AppError);
+  });
+});
+
+describe("terminateRun (ExecutionAttempt complete/non-retryable fail)", () => {
+  it("transitions RUNNING to COMPLETED/PARTIAL/FAILED and sets completedAt", () => {
+    for (const outcome of ["COMPLETED", "PARTIAL", "FAILED"] as const) {
+      const run = { ...createRun(base, now), status: "RUNNING" as const };
+      const terminated = terminateRun(run, outcome, now);
+      expect(terminated.status).toBe(outcome);
+      expect(terminated.completedAt).toEqual(now);
+      expect(isRunTerminal(terminated.status)).toBe(true);
+    }
+  });
+
+  it("rejects terminating a non-RUNNING Run", () => {
+    const run = createRun(base, now);
+    expect(() => assertTerminable(run)).toThrow(AppError);
   });
 });

@@ -4,6 +4,7 @@ import { loadPlatformApiConfig } from "./index.js";
 
 const validEnvironment = {
   DATABASE_URL: "postgresql://user:password@127.0.0.1:5432/intelligence",
+  REDIS_URL: "redis://127.0.0.1:6379",
   OIDC_ISSUER: "https://identity.example.test",
   OIDC_AUDIENCE: "intelligence-platform-api",
   OIDC_JWKS_URI: "https://identity.example.test/.well-known/jwks.json",

@@ -3,6 +3,7 @@ packages:
   - packages/*
 overrides:
   postcss: 8.5.26
+  multer: 2.3.0
 onlyBuiltDependencies:
   - esbuild
 allowBuilds:
